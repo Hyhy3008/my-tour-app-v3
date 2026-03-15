@@ -3,18 +3,31 @@
 import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+
+// Helper function tính khoảng cách
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371e3;
+  const φ1 = (lat1 * Math.PI) / 180;
+  const φ2 = (lat2 * Math.PI) / 180;
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 const userIcon = L.icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-  iconSize: [25, 41], iconAnchor: [12, 41],
+  iconSize: [25, 41], 
+  iconAnchor: [12, 41],
 });
 
 const locationIcon = L.icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-  iconSize: [25, 41], iconAnchor: [12, 41],
+  iconSize: [25, 41], 
+  iconAnchor: [12, 41],
 });
 
 const locations = [
@@ -27,40 +40,75 @@ const locations = [
   { id: "sen", name: "Cánh đồng Sen", lat: 20.2200, lng: 105.9100, radius: 120 },
 ];
 
-function RoutingMachine({ start, end }: { start: { lat: number; lng: number }; end: { lat: number; lng: number } }) {
+// Component vẽ đường đi
+function RoutingMachine({ start, end }: { start: any, end: any }) {
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
+  const hasNotifiedRef = useRef(false);
+  const lastEndRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!start || !end) return;
+    if (!start || !end) {
+      setRouteCoords([]);
+      return;
+    }
+
+    // Reset khi đổi destination
+    if (lastEndRef.current !== end.id) {
+      hasNotifiedRef.current = false;
+      lastEndRef.current = end.id;
+    }
+
     const fetchRoute = async () => {
       try {
         const url = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`;
+        
         const response = await fetch(url);
         const data = await response.json();
+        
         if (data.routes && data.routes.length > 0) {
           const route = data.routes[0];
-          const coords = route.geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
+          const coords = route.geometry.coordinates.map(
+            (coord: number[]) => [coord[1], coord[0]] as [number, number]
+          );
           setRouteCoords(coords);
-          window.dispatchEvent(new CustomEvent('route-found', {
-            detail: {
-              distance: (route.distance / 1000).toFixed(1),
-              time: Math.round(route.duration / 60),
-            }
-          }));
+          
+          // Chỉ thông báo 1 lần
+          if (!hasNotifiedRef.current) {
+            hasNotifiedRef.current = true;
+            window.dispatchEvent(new CustomEvent('route-found', { 
+              detail: {
+                distance: (route.distance / 1000).toFixed(1),
+                time: Math.round(route.duration / 60)
+              }
+            }));
+          }
         }
       } catch (error) {
         console.error('Routing error:', error);
       }
     };
+
     fetchRoute();
-  }, [start, end]);
+  }, [start?.lat, start?.lng, end?.id]);
 
   if (routeCoords.length === 0) return null;
 
   return (
     <>
-      <Polyline positions={routeCoords} color="#1e40af" weight={7} opacity={0.4} />
-      <Polyline positions={routeCoords} color="#3b82f6" weight={5} opacity={0.8} />
+      {/* Viền đường */}
+      <Polyline 
+        positions={routeCoords} 
+        color="#1e40af" 
+        weight={8} 
+        opacity={0.4} 
+      />
+      {/* Đường chính */}
+      <Polyline 
+        positions={routeCoords} 
+        color="#3b82f6" 
+        weight={5} 
+        opacity={0.9} 
+      />
     </>
   );
 }
@@ -73,50 +121,85 @@ function RecenterMap({ lat, lng }: { lat: number; lng: number }) {
   return null;
 }
 
-export default function MapComponent({ location }: { location: { lat: number; lng: number } | null }) {
+interface MapProps {
+  location: { lat: number; lng: number } | null;
+}
+
+export default function MapComponent({ location }: MapProps) {
   const [selectedDestination, setSelectedDestination] = useState<any>(null);
 
+  // Lắng nghe event hủy navigation
+  useEffect(() => {
+    const handleCancelNavigation = () => {
+      setSelectedDestination(null);
+    };
+
+    window.addEventListener('cancel-navigation', handleCancelNavigation);
+    return () => {
+      window.removeEventListener('cancel-navigation', handleCancelNavigation);
+    };
+  }, []);
+
+  const handleSelectDestination = (loc: any) => {
+    if (selectedDestination?.id === loc.id) {
+      // Bấm lại thì hủy
+      setSelectedDestination(null);
+      window.dispatchEvent(new CustomEvent('cancel-navigation'));
+    } else {
+      // Chọn destination mới
+      setSelectedDestination(loc);
+      window.dispatchEvent(new CustomEvent('navigate-to', { detail: loc }));
+    }
+  };
+
   return (
-    <MapContainer center={[20.2506, 105.9745]} zoom={13} style={{ height: '100%', width: '100%' }} zoomControl={false}>
-      <TileLayer
+    <MapContainer 
+      center={[20.2506, 105.9745]} 
+      zoom={13} 
+      style={{ height: '100%', width: '100%' }} 
+      zoomControl={false}
+    >
+      {/* Bản đồ Carto Voyager */}
+      <TileLayer 
         url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+        attribution='&copy; OpenStreetMap &copy; CARTO'
         maxZoom={20}
       />
 
+      {/* Vẽ đường đi */}
       {location && selectedDestination && (
-        <RoutingMachine start={location} end={selectedDestination} />
+        <RoutingMachine 
+          start={location} 
+          end={selectedDestination}
+        />
       )}
 
+      {/* Các địa điểm */}
       {locations.map((loc) => (
         <div key={loc.id}>
-          <Circle
-            center={[loc.lat, loc.lng]}
-            radius={loc.radius}
-            pathOptions={{
+          <Circle 
+            center={[loc.lat, loc.lng]} 
+            radius={loc.radius} 
+            pathOptions={{ 
               color: selectedDestination?.id === loc.id ? '#ef4444' : '#3b82f6',
               fillColor: selectedDestination?.id === loc.id ? '#ef4444' : '#3b82f6',
-              fillOpacity: 0.15, weight: 2, dashArray: '5, 5',
-            }}
+              fillOpacity: 0.15,
+              weight: 2,
+              dashArray: '5, 5'
+            }} 
           />
           <Marker position={[loc.lat, loc.lng]} icon={locationIcon}>
             <Popup>
-              <div className="text-center p-2">
+              <div className="text-center p-1">
                 <p className="font-bold text-gray-800">📍 {loc.name}</p>
                 <p className="text-xs text-gray-500 mt-1">Bán kính: {loc.radius}m</p>
                 {location && (
                   <button
-                    onClick={() => {
-                      if (selectedDestination?.id === loc.id) {
-                        setSelectedDestination(null);
-                        window.dispatchEvent(new CustomEvent('navigate-cancel'));
-                      } else {
-                        setSelectedDestination(loc);
-                        window.dispatchEvent(new CustomEvent('navigate-to', { detail: loc }));
-                      }
-                    }}
+                    onClick={() => handleSelectDestination(loc)}
                     className={`mt-2 px-3 py-1.5 text-white text-xs rounded-lg font-medium transition ${
-                      selectedDestination?.id === loc.id ? 'bg-red-500' : 'bg-blue-500 hover:bg-blue-600'
+                      selectedDestination?.id === loc.id 
+                        ? 'bg-red-500 hover:bg-red-600' 
+                        : 'bg-blue-500 hover:bg-blue-600'
                     }`}
                   >
                     {selectedDestination?.id === loc.id ? '❌ Hủy' : '🗺️ Chỉ đường'}
@@ -128,13 +211,16 @@ export default function MapComponent({ location }: { location: { lat: number; ln
         </div>
       ))}
 
+      {/* Vị trí người dùng */}
       {location && (
         <>
           <Marker position={[location.lat, location.lng]} icon={userIcon}>
             <Popup>
               <div className="text-center">
                 <p className="font-bold">🧭 Vị trí của bạn</p>
-                <p className="text-xs text-gray-500">{location.lat.toFixed(5)}, {location.lng.toFixed(5)}</p>
+                <p className="text-xs text-gray-500">
+                  {location.lat.toFixed(5)}, {location.lng.toFixed(5)}
+                </p>
               </div>
             </Popup>
           </Marker>
