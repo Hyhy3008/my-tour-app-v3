@@ -1,21 +1,22 @@
 // app/api/chat/route.ts
-// Dùng Xenova/transformers để embed - chạy local, KHÔNG cần API key ngoài
-
 import { NextRequest, NextResponse } from "next/server";
 
-// ✅ Lazy load pipeline để tránh lỗi build
 let embeddingPipeline: any = null;
 
 async function getEmbedding(text: string): Promise<number[] | null> {
   try {
+    // ✅ Trỏ cache sang /tmp - thư mục duy nhất được ghi trên Vercel
+    const { env } = await import("@xenova/transformers");
+    env.cacheDir = "/tmp/xenova-cache";
+
     if (!embeddingPipeline) {
-      // Dynamic import - chỉ load khi cần
       const { pipeline } = await import("@xenova/transformers");
       embeddingPipeline = await pipeline(
         "feature-extraction",
         "Xenova/all-MiniLM-L6-v2"
       );
     }
+
     const output = await embeddingPipeline(text, {
       pooling: "mean",
       normalize: true,
@@ -95,7 +96,7 @@ export async function POST(req: NextRequest) {
 
     const isArrival = !!contextPrompt && !userQuestion;
 
-    // Bước 1: Embed + tìm docs
+    // Bước 1: Embed + tìm docs RAG
     let ragContext = "";
     const embedding = await getEmbedding(query);
 
@@ -105,6 +106,8 @@ export async function POST(req: NextRequest) {
         ragContext = docs.map((d, i) => `[${i + 1}] ${d}`).join("\n\n");
         console.log(`✅ RAG OK: ${docs.length} docs, location=${locationId}`);
       }
+    } else {
+      console.log("RAG skip: embedding failed");
     }
 
     // Bước 2: Build prompt
@@ -112,15 +115,23 @@ export async function POST(req: NextRequest) {
     const systemPrompt = language === "en"
       ? [
           "You are a friendly tour guide in Vietnam.",
-          hasContext ? `Use ONLY these documents:\n\n${ragContext}\n\nDo not invent info.` : "Use your knowledge.",
+          hasContext
+            ? `Use ONLY these documents:\n\n${ragContext}\n\nDo not invent info.`
+            : "Use your knowledge.",
           "Reply in English, 3-4 sentences, friendly with emojis.",
-          isArrival ? "Tourist just ARRIVED - welcome and intro briefly." : "Answer the question directly.",
+          isArrival
+            ? "Tourist just ARRIVED - welcome and intro briefly."
+            : "Answer the question directly.",
         ].join("\n")
       : [
           "Bạn là hướng dẫn viên du lịch thân thiện tại Việt Nam.",
-          hasContext ? `Chỉ dùng TÀI LIỆU này:\n\n${ragContext}\n\nKhông bịa thêm.` : "Dùng kiến thức chung.",
+          hasContext
+            ? `Chỉ dùng TÀI LIỆU này:\n\n${ragContext}\n\nKhông bịa thêm.`
+            : "Dùng kiến thức chung.",
           "Trả lời tiếng Việt, 3-4 câu, thân thiện, có emoji.",
-          isArrival ? "Khách vừa ĐẾN - chào đón và giới thiệu ngắn." : "Trả lời trực tiếp câu hỏi.",
+          isArrival
+            ? "Khách vừa ĐẾN - chào đón và giới thiệu ngắn."
+            : "Trả lời trực tiếp câu hỏi.",
         ].join("\n");
 
     // Bước 3: Gọi Cerebras
