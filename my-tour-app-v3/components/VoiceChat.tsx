@@ -13,7 +13,6 @@ interface Message {
   content: string;
 }
 
-// Khai báo Web Speech API types
 declare global {
   interface Window {
     SpeechRecognition: any;
@@ -33,6 +32,7 @@ export default function VoiceChat({ language, isMuted }: Props) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isMutedRef = useRef(isMuted);
   const languageRef = useRef(language);
+  const isStartedRef = useRef(false);   // ✅ track recognition đã start chưa
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
@@ -42,29 +42,17 @@ export default function VoiceChat({ language, isMuted }: Props) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Khởi tạo Web Speech API
-  const initRecognition = useCallback(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setError(language === 'vi'
-        ? 'Trình duyệt không hỗ trợ nhận diện giọng nói. Dùng Chrome!'
-        : 'Browser does not support speech recognition. Use Chrome!');
-      return null;
-    }
+  // ✅ Dừng audio page (TTS tự động từ location) khi Voice Chat chuẩn bị nói
+  const stopPageAudio = useCallback(() => {
+    // Dispatch event để page.tsx dừng audio đang phát
+    window.dispatchEvent(new CustomEvent('voice-chat-speaking'));
+  }, []);
 
-    const recognition = new SpeechRecognition();
-    recognition.lang = language === 'vi' ? 'vi-VN' : 'en-US';
-    recognition.continuous = false;
-    recognition.interimResults = true; // Hiện text real-time khi đang nói
-    recognition.maxAlternatives = 1;
-
-    return recognition;
-  }, [language]);
-
-  // Phát audio TTS
+  // Phát TTS từ /api/tts
   const speakText = useCallback(async (text: string) => {
     if (isMutedRef.current) return;
     try {
+      // Dừng audio VoiceChat đang phát nếu có
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current = null;
@@ -80,6 +68,7 @@ export default function VoiceChat({ language, isMuted }: Props) {
       const audio = new Audio(url);
       audioRef.current = audio;
       audio.onended = () => { URL.revokeObjectURL(url); audioRef.current = null; };
+      audio.onerror = () => { URL.revokeObjectURL(url); audioRef.current = null; };
       await audio.play();
     } catch (e) {
       console.error('TTS error:', e);
@@ -93,8 +82,8 @@ export default function VoiceChat({ language, isMuted }: Props) {
 
     const lang = languageRef.current;
     const prompt = lang === 'vi'
-      ? `Người dùng đang hỏi về địa điểm du lịch: "${userText}". Trả lời ngắn gọn 2-3 câu, thân thiện, có emoji.`
-      : `Tourist is asking: "${userText}". Reply in 2-3 short sentences, friendly, with emojis.`;
+      ? `Người dùng hỏi về du lịch: "${userText}". Trả lời ngắn gọn 2-3 câu, thân thiện, có emoji.`
+      : `Tourist asks: "${userText}". Reply in 2-3 short friendly sentences with emojis.`;
 
     try {
       const res = await fetch('/api/chat', {
@@ -102,10 +91,11 @@ export default function VoiceChat({ language, isMuted }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contextPrompt: prompt, language: lang }),
       });
-
       if (res.ok) {
         const data = await res.json();
         setMessages(prev => [...prev, { role: 'ai', content: data.reply }]);
+        // ✅ Dừng audio page trước khi VoiceChat nói
+        stopPageAudio();
         await speakText(data.reply);
       }
     } catch (e) {
@@ -113,56 +103,77 @@ export default function VoiceChat({ language, isMuted }: Props) {
     } finally {
       setIsThinking(false);
     }
-  }, [speakText]);
+  }, [speakText, stopPageAudio]);
 
-  // Bắt đầu nghe
+  // Khởi tạo recognition
+  const createRecognition = useCallback(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setError(language === 'vi'
+        ? 'Trình duyệt không hỗ trợ. Dùng Chrome!'
+        : 'Browser not supported. Use Chrome!');
+      return null;
+    }
+    const r = new SpeechRecognition();
+    r.lang = language === 'vi' ? 'vi-VN' : 'en-US';
+    r.continuous = false;
+    r.interimResults = true;
+    r.maxAlternatives = 1;
+    return r;
+  }, [language]);
+
+  // ✅ Bắt đầu nghe - chỉ stop khi đã start
   const startListening = useCallback(() => {
+    // Nếu đang think hoặc đang nghe rồi thì bỏ qua
+    if (isThinking || isListening) return;
+
     setError('');
     setTranscript('');
 
-    // Dừng audio đang phát nếu có
+    // ✅ Dừng audio page (TTS location) khi user bắt đầu nói
+    stopPageAudio();
+
+    // Dừng audio VoiceChat đang phát nếu có
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
     }
 
-    const recognition = initRecognition();
+    const recognition = createRecognition();
     if (!recognition) return;
 
     recognitionRef.current = recognition;
+    isStartedRef.current = false; // reset
 
     recognition.onstart = () => {
+      isStartedRef.current = true; // ✅ đánh dấu đã start thật sự
       setIsListening(true);
     };
 
     recognition.onresult = (event: any) => {
-      let interimText = '';
-      let finalText = '';
-
+      let interim = '';
+      let final = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const text = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalText += text;
-        } else {
-          interimText += text;
-        }
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) final += t;
+        else interim += t;
       }
-
-      // Hiện text real-time
-      setTranscript(finalText || interimText);
-
-      // Nếu có final text → gửi AI
-      if (finalText) {
+      setTranscript(final || interim);
+      if (final) {
+        isStartedRef.current = false;
         setIsListening(false);
         recognition.stop();
-        askAI(finalText.trim());
+        askAI(final.trim());
       }
     };
 
     recognition.onerror = (event: any) => {
+      isStartedRef.current = false;
       setIsListening(false);
+      // ✅ Bỏ qua lỗi 'aborted' vì do user nhả nút quá nhanh
+      if (event.error === 'aborted') return;
       if (event.error === 'no-speech') {
-        setError(language === 'vi' ? 'Không nghe thấy gì. Thử lại!' : 'No speech detected. Try again!');
+        setError(language === 'vi' ? 'Không nghe thấy. Thử lại!' : 'No speech. Try again!');
       } else if (event.error === 'not-allowed') {
         setError(language === 'vi' ? 'Cần cấp quyền microphone!' : 'Microphone permission required!');
       } else {
@@ -171,21 +182,26 @@ export default function VoiceChat({ language, isMuted }: Props) {
     };
 
     recognition.onend = () => {
+      isStartedRef.current = false;
       setIsListening(false);
     };
 
     recognition.start();
-  }, [initRecognition, askAI, language]);
+  }, [isThinking, isListening, createRecognition, askAI, stopPageAudio, language]);
 
-  // Dừng nghe
+  // ✅ Dừng nghe - chỉ gọi stop() nếu đã start thật sự
   const stopListening = useCallback(() => {
-    recognitionRef.current?.stop();
+    if (recognitionRef.current && isStartedRef.current) {
+      recognitionRef.current.stop();
+    }
     setIsListening(false);
   }, []);
 
   // Đóng panel
   const handleClose = () => {
-    stopListening();
+    if (recognitionRef.current && isStartedRef.current) {
+      recognitionRef.current.stop();
+    }
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
@@ -194,6 +210,7 @@ export default function VoiceChat({ language, isMuted }: Props) {
     setMessages([]);
     setTranscript('');
     setError('');
+    isStartedRef.current = false;
   };
 
   const placeholder = language === 'vi'
@@ -202,7 +219,7 @@ export default function VoiceChat({ language, isMuted }: Props) {
 
   return (
     <>
-      {/* Nút mở Voice Chat - nổi góc phải */}
+      {/* Nút mở Voice Chat */}
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
@@ -212,7 +229,7 @@ export default function VoiceChat({ language, isMuted }: Props) {
         </button>
       )}
 
-      {/* Panel Voice Chat */}
+      {/* Panel */}
       {isOpen && (
         <div className="absolute bottom-16 left-0 right-0 z-[1001] p-3">
           <div className="bg-white rounded-3xl shadow-2xl overflow-hidden border border-gray-100">
@@ -263,7 +280,9 @@ export default function VoiceChat({ language, isMuted }: Props) {
             {(isListening || transcript) && (
               <div className="px-4 py-2 bg-purple-50 border-t border-purple-100">
                 <p className="text-xs text-purple-600 flex items-center gap-1">
-                  {isListening && <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse inline-block" />}
+                  {isListening && (
+                    <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse inline-block" />
+                  )}
                   {transcript || (language === 'vi' ? 'Đang nghe...' : 'Listening...')}
                 </p>
               </div>
@@ -276,26 +295,35 @@ export default function VoiceChat({ language, isMuted }: Props) {
               </div>
             )}
 
-            {/* Nút Mic */}
-            <div className="px-4 py-3 flex items-center justify-center border-t border-gray-100 bg-white">
+            {/* Nút Mic - giữ để nói, nhả để gửi */}
+            <div className="px-4 py-3 flex flex-col items-center gap-1 border-t border-gray-100 bg-white">
               <button
                 onPointerDown={startListening}
                 onPointerUp={stopListening}
+                onPointerLeave={stopListening} // ✅ nhả ngoài vùng nút cũng stop
                 disabled={isThinking}
-                className={`w-16 h-16 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 select-none ${
+                className={`w-16 h-16 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 select-none touch-none ${
                   isListening
-                    ? 'bg-red-500 text-white animate-pulse scale-110'
+                    ? 'bg-red-500 text-white scale-110'
                     : isThinking
                       ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                       : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white hover:scale-105'
                 }`}
               >
-                {isThinking ? <Loader2 size={28} className="animate-spin" /> : <Mic size={28} />}
+                {isThinking
+                  ? <Loader2 size={28} className="animate-spin" />
+                  : isListening
+                    ? <MicOff size={28} />
+                    : <Mic size={28} />
+                }
               </button>
-              <p className="absolute text-xs text-gray-400 mt-20">
+              <p className="text-xs text-gray-400 text-center">
                 {isListening
-                  ? (language === 'vi' ? 'Đang nghe... nhả để gửi' : 'Listening... release to send')
-                  : (language === 'vi' ? 'Giữ để nói' : 'Hold to speak')}
+                  ? (language === 'vi' ? '🔴 Đang nghe... nhả để gửi' : '🔴 Listening... release to send')
+                  : isThinking
+                    ? (language === 'vi' ? 'Đang xử lý...' : 'Processing...')
+                    : (language === 'vi' ? 'Giữ để nói' : 'Hold to speak')
+                }
               </p>
             </div>
           </div>
