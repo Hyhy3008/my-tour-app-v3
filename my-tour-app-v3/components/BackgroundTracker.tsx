@@ -28,8 +28,6 @@ export default function BackgroundTracker({ isTracking, isMuted, onLocationUpdat
   const visitedRef = useRef<Set<string>>(new Set());
   const processingRef = useRef(false);
   const lastUpdateRef = useRef<{ lat: number; lng: number } | null>(null);
-  const hasGPSRef = useRef(false);
-  const useHighAccuracyRef = useRef(true);
   const { calculateDistance } = useTourLogic();
 
   const speakText = useCallback((text: string) => {
@@ -51,7 +49,7 @@ export default function BackgroundTracker({ isTracking, isMuted, onLocationUpdat
         processingRef.current = true;
 
         try {
-          onNewMessage(`📍 Đã đến ${loc.name}!`, false);
+          onNewMessage(`📍 ${loc.name}`, false);
           onLocationVisited?.();
 
           const res = await fetch('/api/chat', {
@@ -64,9 +62,11 @@ export default function BackgroundTracker({ isTracking, isMuted, onLocationUpdat
             const data = await res.json();
             onNewMessage(data.reply, true);
             speakText(data.reply);
+          } else {
+            onNewMessage('⚠️ Không thể tải thông tin địa điểm', false);
           }
         } catch {
-          onNewMessage('❌ Lỗi kết nối AI', false);
+          onNewMessage('⚠️ Lỗi kết nối mạng', false);
         } finally {
           processingRef.current = false;
         }
@@ -76,14 +76,9 @@ export default function BackgroundTracker({ isTracking, isMuted, onLocationUpdat
   }, [calculateDistance, onNewMessage, onLocationVisited, speakText]);
 
   const handlePosition = useCallback((position: GeolocationPosition) => {
-    const { latitude, longitude, accuracy } = position.coords;
+    const { latitude, longitude } = position.coords;
     
-    // Đánh dấu đã có GPS
-    if (!hasGPSRef.current) {
-      hasGPSRef.current = true;
-      const accuracyText = accuracy < 50 ? 'chính xác' : accuracy < 100 ? 'khá tốt' : 'đủ dùng';
-      onNewMessage(`✅ GPS hoạt động (±${Math.round(accuracy)}m - ${accuracyText})`, false);
-    }
+    console.log(`GPS: ${latitude.toFixed(5)}, ${longitude.toFixed(5)} (±${Math.round(position.coords.accuracy)}m)`);
     
     checkProximity(latitude, longitude);
 
@@ -100,56 +95,19 @@ export default function BackgroundTracker({ isTracking, isMuted, onLocationUpdat
 
     lastUpdateRef.current = { lat: latitude, lng: longitude };
     onLocationUpdate({ lat: latitude, lng: longitude });
-  }, [calculateDistance, checkProximity, onLocationUpdate, onNewMessage]);
+  }, [calculateDistance, checkProximity, onLocationUpdate]);
 
   const handleError = useCallback((error: GeolocationPositionError) => {
-    // Chỉ log, KHÔNG hiện thông báo lỗi
-    console.log('GPS error:', error.code, error.message);
-    
-    // Nếu timeout với high accuracy, thử lại với low accuracy
-    if (error.code === error.TIMEOUT && useHighAccuracyRef.current) {
-      console.log('Chuyển sang chế độ low accuracy...');
-      useHighAccuracyRef.current = false;
-      
-      // Không cần thông báo user, tự động fallback
-    }
+    console.error('GPS error:', error.code, error.message);
   }, []);
-
-  const startWatching = useCallback(() => {
-    if (watchIdRef.current) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
-    }
-
-    const options: PositionOptions = {
-      enableHighAccuracy: useHighAccuracyRef.current,
-      timeout: Infinity, // Không giới hạn timeout
-      maximumAge: 10000 // Chấp nhận vị trí cũ 10s
-    };
-
-    watchIdRef.current = navigator.geolocation.watchPosition(
-      handlePosition,
-      handleError,
-      options
-    );
-  }, [handlePosition, handleError]);
 
   useEffect(() => {
     if (isTracking && 'geolocation' in navigator) {
       lastUpdateRef.current = null;
-      hasGPSRef.current = false;
-      useHighAccuracyRef.current = true;
       
-      onNewMessage('🔍 Đang tìm vị trí...', false);
-
-      // Lấy vị trí đầu tiên nhanh (network location)
       navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          handlePosition(pos);
-        },
-        (err) => {
-          console.log('Initial position error:', err);
-          onNewMessage('⏳ Đang tìm GPS... (có thể mất vài giây)', false);
-        },
+        handlePosition,
+        () => {},
         { 
           enableHighAccuracy: false,
           timeout: 5000,
@@ -157,27 +115,15 @@ export default function BackgroundTracker({ isTracking, isMuted, onLocationUpdat
         }
       );
 
-      // Bắt đầu watch với high accuracy
-      startWatching();
-
-      // Nếu sau 15s vẫn không có GPS, fallback sang low accuracy
-      const fallbackTimer = setTimeout(() => {
-        if (!hasGPSRef.current) {
-          console.log('Fallback to low accuracy after 15s');
-          useHighAccuracyRef.current = false;
-          startWatching();
-          onNewMessage('📡 Đang dùng vị trí network (độ chính xác thấp hơn)', false);
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        handlePosition,
+        handleError,
+        { 
+          enableHighAccuracy: true,
+          timeout: Infinity,
+          maximumAge: 10000
         }
-      }, 15000);
-
-      return () => {
-        clearTimeout(fallbackTimer);
-        if (watchIdRef.current) {
-          navigator.geolocation.clearWatch(watchIdRef.current);
-          watchIdRef.current = null;
-        }
-        window.speechSynthesis?.cancel();
-      };
+      );
     } else {
       if (watchIdRef.current) {
         navigator.geolocation.clearWatch(watchIdRef.current);
@@ -185,7 +131,13 @@ export default function BackgroundTracker({ isTracking, isMuted, onLocationUpdat
       }
       window.speechSynthesis?.cancel();
     }
-  }, [isTracking, handlePosition, startWatching, onNewMessage]);
+
+    return () => {
+      if (watchIdRef.current) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
+  }, [isTracking, handlePosition, handleError]);
 
   return null;
 }
