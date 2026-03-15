@@ -2,11 +2,16 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { Navigation, MapPin, Volume2, VolumeX, CheckCircle, X } from 'lucide-react';
+import { Navigation, MapPin, Volume2, VolumeX, CheckCircle, X, Map, ShoppingBag, Globe } from 'lucide-react';
+import ShopTab from '@/components/ShopTab';
 
 const MapContainer = dynamic(() => import('@/components/MapContainer'), {
   ssr: false,
-  loading: () => <div className="h-full w-full bg-gray-200" />,
+  loading: () => (
+    <div className="h-full w-full bg-gray-200 animate-pulse flex items-center justify-center">
+      <p className="text-gray-500">Đang tải bản đồ...</p>
+    </div>
+  ),
 });
 
 interface Message {
@@ -15,17 +20,83 @@ interface Message {
   time: string;
 }
 
+// ============================================
+// THÊM: Translations
+// ============================================
+const translations = {
+  vi: {
+    tour: 'Tour',
+    shop: 'Mua sắm',
+    tracking: 'Đang theo dõi',
+    waiting: 'Chờ kích hoạt',
+    points: 'điểm',
+    navigatingTo: 'Đang dẫn đường đến',
+    km: 'km',
+    min: 'phút',
+    welcome: 'Chào mừng!',
+    tapToStart: 'Bấm Navigation để bắt đầu tour',
+    startTour: '🚀 Bắt đầu tour! Di chuyển đến các địa điểm để nghe thuyết minh.',
+    stopTour: '⏹️ Đã dừng tour.',
+    cancelNav: '❌ Đã hủy chỉ đường',
+    gpsError: '❌ Bạn cần cấp quyền GPS. Vào Cài đặt → Quyền → Vị trí.',
+    loadError: '⚠️ Không thể tải thông tin',
+    arrivedAt: '📍 Đã đến',
+    navigateTo: '🗺️ Chỉ đường đến',
+  },
+  en: {
+    tour: 'Tour',
+    shop: 'Shop',
+    tracking: 'Tracking',
+    waiting: 'Ready',
+    points: 'spots',
+    navigatingTo: 'Navigating to',
+    km: 'km',
+    min: 'min',
+    welcome: 'Welcome!',
+    tapToStart: 'Tap Navigation to start tour',
+    startTour: '🚀 Tour started! Move to locations to hear the guide.',
+    stopTour: '⏹️ Tour stopped.',
+    cancelNav: '❌ Navigation cancelled',
+    gpsError: '❌ Please enable GPS in Settings → Permissions → Location.',
+    loadError: '⚠️ Cannot load information',
+    arrivedAt: '📍 Arrived at',
+    navigateTo: '🗺️ Navigate to',
+  },
+};
+
+type Language = 'vi' | 'en';
+type CityType = 'ninh-binh' | 'hanoi';
+type TabType = 'tour' | 'shop';
+
 export default function Home() {
+  // ============================================
+  // THÊM: States mới
+  // ============================================
+  const [activeTab, setActiveTab] = useState<TabType>('tour');
+  const [selectedCity, setSelectedCity] = useState<CityType>('ninh-binh');
+  const [language, setLanguage] = useState<Language>('vi');
+  const [showLangMenu, setShowLangMenu] = useState(false);
+
+  // ============================================
+  // GIỮ NGUYÊN: States gốc
+  // ============================================
   const [isTracking, setIsTracking] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [visitedCount, setVisitedCount] = useState(0);
   const [routeInfo, setRouteInfo] = useState<{ distance: string; time: number } | null>(null);
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
-  
-  // ⭐ KHÔNG dùng useState cho location - tránh re-render
-  const [mapKey, setMapKey] = useState(0); // Chỉ để force update map khi cần
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const isMutedRef = useRef(isMuted);
+
+  const t = translations[language];
+
+  // ============================================
+  // GIỮ NGUYÊN: Logic gốc
+  // ============================================
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
 
   useEffect(() => {
     if ('serviceWorker' in navigator) {
@@ -37,15 +108,59 @@ export default function Home() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
-  // Lắng nghe events
+  // THÊM: Reset khi đổi city
   useEffect(() => {
-    const handleNavigateTo = (e: any) => {
+    if (isTracking) {
+      setIsTracking(false);
+      window.dispatchEvent(new CustomEvent('stop-tracking'));
+    }
+    setMessages([]);
+    setVisitedCount(0);
+    setRouteInfo(null);
+    setNavigatingTo(null);
+    window.speechSynthesis?.cancel();
+  }, [selectedCity]);
+
+  const addMessage = useCallback((msg: string, isAi: boolean) => {
+    const time = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+    setMessages(prev => [...prev, { role: isAi ? 'ai' : 'system', content: msg, time }]);
+  }, []);
+
+  const speakText = useCallback((text: string) => {
+    if (isMutedRef.current || !('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = language === 'vi' ? 'vi-VN' : 'en-US';
+    u.rate = 0.9;
+    window.speechSynthesis.speak(u);
+  }, [language]);
+
+  const fetchAI = useCallback(async (prompt: string) => {
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contextPrompt: prompt, language }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        addMessage(data.reply, true);
+        speakText(data.reply);
+      }
+    } catch (e) {
+      console.error('AI Error:', e);
+      addMessage(t.loadError, false);
+    }
+  }, [addMessage, speakText, language, t.loadError]);
+
+  useEffect(() => {
+    const handleNavigateTo = (e: CustomEvent) => {
       setNavigatingTo(e.detail.name);
       setRouteInfo(null);
-      addMessage(`🗺️ Chỉ đường đến ${e.detail.name}`, false);
+      addMessage(`${t.navigateTo} ${e.detail.name}`, false);
     };
 
-    const handleRouteFound = (e: any) => {
+    const handleRouteFound = (e: CustomEvent) => {
       setRouteInfo(e.detail);
     };
 
@@ -54,67 +169,45 @@ export default function Home() {
       setRouteInfo(null);
     };
 
-    const handleLocationArrived = (e: any) => {
+    const handleLocationArrived = (e: CustomEvent) => {
       setVisitedCount(prev => prev + 1);
-      addMessage(`📍 ${e.detail.name}`, false);
-      
-      // Gọi AI
+      addMessage(`${t.arrivedAt} ${e.detail.name}`, false);
       fetchAI(e.detail.prompt);
     };
 
-    window.addEventListener('navigate-to', handleNavigateTo);
-    window.addEventListener('route-found', handleRouteFound);
+    window.addEventListener('navigate-to', handleNavigateTo as EventListener);
+    window.addEventListener('route-found', handleRouteFound as EventListener);
     window.addEventListener('navigation-cancelled', handleCancelNav);
-    window.addEventListener('location-arrived', handleLocationArrived);
+    window.addEventListener('location-arrived', handleLocationArrived as EventListener);
 
     return () => {
-      window.removeEventListener('navigate-to', handleNavigateTo);
-      window.removeEventListener('route-found', handleRouteFound);
+      window.removeEventListener('navigate-to', handleNavigateTo as EventListener);
+      window.removeEventListener('route-found', handleRouteFound as EventListener);
       window.removeEventListener('navigation-cancelled', handleCancelNav);
-      window.removeEventListener('location-arrived', handleLocationArrived);
+      window.removeEventListener('location-arrived', handleLocationArrived as EventListener);
     };
-  }, []);
-
-  const addMessage = useCallback((msg: string, isAi: boolean) => {
-    const time = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-    setMessages(prev => [...prev, { role: isAi ? 'ai' : 'system', content: msg, time }]);
-  }, []);
-
-  const fetchAI = async (prompt: string) => {
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contextPrompt: prompt }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        addMessage(data.reply, true);
-        
-        // TTS
-        if (!isMuted && 'speechSynthesis' in window) {
-          window.speechSynthesis.cancel();
-          const u = new SpeechSynthesisUtterance(data.reply);
-          u.lang = 'vi-VN';
-          u.rate = 0.9;
-          window.speechSynthesis.speak(u);
-        }
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
+  }, [addMessage, fetchAI, t]);
 
   const handleStartTour = () => {
     if (!isTracking) {
-      addMessage('🚀 Bắt đầu tour!', false);
-      setIsTracking(true);
-      setMapKey(prev => prev + 1); // Force update map
+      navigator.geolocation.getCurrentPosition(
+        () => {
+          setIsTracking(true);
+          addMessage(t.startTour, false);
+        },
+        (error) => {
+          if (error.code === error.PERMISSION_DENIED) {
+            addMessage(t.gpsError, false);
+          }
+        },
+        { enableHighAccuracy: false, timeout: 10000 }
+      );
     } else {
       setIsTracking(false);
       setNavigatingTo(null);
       setRouteInfo(null);
-      addMessage('⏹️ Đã dừng.', false);
+      addMessage(t.stopTour, false);
+      window.speechSynthesis?.cancel();
       window.dispatchEvent(new CustomEvent('stop-tracking'));
     }
   };
@@ -122,110 +215,227 @@ export default function Home() {
   const handleCancelNavigation = () => {
     setNavigatingTo(null);
     setRouteInfo(null);
-    addMessage('❌ Đã hủy', false);
+    addMessage(t.cancelNav, false);
     window.dispatchEvent(new CustomEvent('cancel-navigation'));
   };
 
+  const toggleMute = () => {
+    setIsMuted(prev => {
+      if (!prev) window.speechSynthesis?.cancel();
+      return !prev;
+    });
+  };
+
+  // ============================================
+  // RENDER
+  // ============================================
   return (
     <div className="flex flex-col h-[100dvh] bg-gray-100 overflow-hidden relative">
-      {/* Header */}
-      <div className="absolute top-0 left-0 right-0 z-[1000] p-3">
-        <div className="bg-white/95 backdrop-blur-md shadow-lg rounded-2xl p-3 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
-              <MapPin className="text-white" size={20} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="font-bold text-gray-800">Ninh Bình Tour</h1>
-                <span className="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full flex items-center gap-1">
-                  <CheckCircle size={12} /> DEV
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${isTracking ? 'bg-green-500' : 'bg-gray-300'}`} />
-                <p className={`text-xs ${isTracking ? 'text-green-600' : 'text-gray-400'}`}>
-                  {isTracking ? 'Đang theo dõi' : 'Chờ'}
-                </p>
-                {visitedCount > 0 && (
-                  <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
-                    {visitedCount}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex gap-2">
-            <button 
-              onClick={() => setIsMuted(!isMuted)} 
-              className={`p-3 rounded-full ${isMuted ? 'bg-gray-200' : 'bg-gray-100'}`}
+      
+      {/* ============================================ */}
+      {/* THÊM: Language Selector (góc phải) */}
+      {/* ============================================ */}
+      <div className="absolute top-4 right-4 z-[1002]">
+        <button
+          onClick={() => setShowLangMenu(!showLangMenu)}
+          className="bg-white/95 backdrop-blur-md shadow-lg rounded-full p-2 flex items-center gap-1"
+        >
+          <Globe size={18} className="text-gray-600" />
+          <span className="text-sm font-medium">{language.toUpperCase()}</span>
+        </button>
+        
+        {showLangMenu && (
+          <div className="absolute right-0 mt-2 bg-white rounded-xl shadow-lg overflow-hidden">
+            <button
+              onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
+              className={`w-full px-4 py-2 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}
             >
-              {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+              🇻🇳 Tiếng Việt
             </button>
             <button
-              onClick={handleStartTour}
-              className={`p-3 rounded-full shadow-lg ${
-                isTracking
-                  ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white'
-                  : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'
-              }`}
+              onClick={() => { setLanguage('en'); setShowLangMenu(false); }}
+              className={`w-full px-4 py-2 text-left text-sm ${language === 'en' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}
             >
-              <Navigation size={22} />
+              🇬🇧 English
             </button>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* Route Banner */}
-      {navigatingTo && routeInfo && (
-        <div className="absolute top-20 left-0 right-0 z-[999] p-3">
-          <div className="bg-blue-500/95 text-white rounded-2xl p-3 max-w-sm mx-auto shadow-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs opacity-80">Đang dẫn đường</p>
-                <p className="font-bold">{navigatingTo}</p>
-                <div className="flex gap-3 mt-1 text-sm">
-                  <span>📏 {routeInfo.distance}km</span>
-                  <span>⏱️ {routeInfo.time}p</span>
-                </div>
-              </div>
-              <button onClick={handleCancelNavigation} className="p-2 bg-white/20 rounded-lg">
-                <X size={20} />
+      {/* ============================================ */}
+      {/* Tab Tour - GIỮ NGUYÊN GIAO DIỆN GỐC */}
+      {/* ============================================ */}
+      {activeTab === 'tour' && (
+        <>
+          {/* THÊM: City Selector */}
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[1001]">
+            <div className="bg-white/95 backdrop-blur-md rounded-full p-1 shadow-lg flex gap-1">
+              <button
+                onClick={() => setSelectedCity('ninh-binh')}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                  selectedCity === 'ninh-binh'
+                    ? 'bg-blue-500 text-white'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                🏞️ Ninh Bình
+              </button>
+              <button
+                onClick={() => setSelectedCity('hanoi')}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                  selectedCity === 'hanoi'
+                    ? 'bg-blue-500 text-white'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                🏛️ Hà Nội
               </button>
             </div>
           </div>
-        </div>
-      )}
 
-      {/* Map - Tự quản lý GPS bên trong */}
-      <div className="flex-grow z-0">
-        <MapContainer key={mapKey} isTracking={isTracking} />
-      </div>
+          {/* GIỮ NGUYÊN: Header gốc */}
+          <div className="absolute top-0 left-0 right-20 z-[1000] p-3">
+            <div className="bg-white/95 backdrop-blur-md shadow-lg rounded-2xl p-3 flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
+                  <MapPin className="text-white" size={20} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h1 className="font-bold text-gray-800">
+                      {selectedCity === 'ninh-binh' ? 'Ninh Bình' : 'Hà Nội'} Tour
+                    </h1>
+                    <span className="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <CheckCircle size={12} /> DEV
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${isTracking ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
+                    <p className={`text-xs ${isTracking ? 'text-green-600' : 'text-gray-400'}`}>
+                      {isTracking ? t.tracking : t.waiting}
+                    </p>
+                    {visitedCount > 0 && (
+                      <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
+                        {visitedCount} {t.points}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
 
-      {/* Chat */}
-      <div className="h-[32vh] bg-white rounded-t-3xl shadow-2xl z-[1000] flex flex-col">
-        <div className="flex justify-center pt-2 pb-1">
-          <div className="w-10 h-1 bg-gray-300 rounded-full" />
-        </div>
-        <div className="flex-grow overflow-y-auto px-4 pb-4 space-y-3">
-          {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full">
-              <Navigation className="text-blue-500 mb-2" size={32} />
-              <p className="text-gray-500 text-sm">Bấm Navigation!</p>
-            </div>
-          )}
-          {messages.map((m, i) => (
-            <div key={i} className={`flex ${m.role === 'ai' ? 'justify-start' : 'justify-center'}`}>
-              <div className={`max-w-[90%] p-3 rounded-2xl text-sm ${
-                m.role === 'ai' ? 'bg-blue-50 border border-blue-100' : 'bg-gray-100 text-gray-500 text-xs'
-              }`}>
-                <p className="whitespace-pre-wrap">{m.content}</p>
-                {m.role === 'ai' && <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>}
+              <div className="flex gap-2">
+                <button 
+                  onClick={toggleMute} 
+                  className={`p-3 rounded-full transition-colors ${isMuted ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-600'}`}
+                >
+                  {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+                </button>
+                <button
+                  onClick={handleStartTour}
+                  className={`p-3 rounded-full shadow-lg transition-all ${
+                    isTracking
+                      ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white'
+                      : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'
+                  }`}
+                >
+                  <Navigation size={22} className={isTracking ? 'animate-pulse' : ''} />
+                </button>
               </div>
             </div>
-          ))}
-          <div ref={chatEndRef} />
+          </div>
+
+          {/* GIỮ NGUYÊN: Route Banner */}
+          {navigatingTo && routeInfo && (
+            <div className="absolute top-28 left-0 right-0 z-[999] p-3">
+              <div className="bg-blue-500/95 backdrop-blur text-white rounded-2xl p-3 max-w-sm mx-auto shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs opacity-80">{t.navigatingTo}</p>
+                    <p className="font-bold">{navigatingTo}</p>
+                    <div className="flex gap-3 mt-1 text-sm">
+                      <span>📏 {routeInfo.distance} {t.km}</span>
+                      <span>⏱️ {routeInfo.time} {t.min}</span>
+                    </div>
+                  </div>
+                  <button onClick={handleCancelNavigation} className="p-2 bg-white/20 hover:bg-white/30 rounded-lg">
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* GIỮ NGUYÊN: Map - THÊM prop selectedCity */}
+          <div className="flex-grow z-0">
+            <MapContainer isTracking={isTracking} selectedCity={selectedCity} language={language} />
+          </div>
+
+          {/* GIỮ NGUYÊN: Chat Panel */}
+          <div className="h-[28vh] bg-white rounded-t-3xl shadow-2xl z-[1000] flex flex-col">
+            <div className="flex justify-center pt-2 pb-1">
+              <div className="w-10 h-1 bg-gray-300 rounded-full" />
+            </div>
+            <div className="flex-grow overflow-y-auto px-4 pb-4 space-y-3">
+              {messages.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full text-center">
+                  <Navigation className="text-blue-500 mb-3" size={40} />
+                  <p className="text-gray-600 font-medium">{t.welcome}</p>
+                  <p className="text-gray-400 text-sm mt-1">{t.tapToStart}</p>
+                </div>
+              )}
+              {messages.map((m, i) => (
+                <div key={i} className={`flex ${m.role === 'ai' ? 'justify-start' : 'justify-center'}`}>
+                  <div className={`max-w-[90%] p-3 rounded-2xl text-sm ${
+                    m.role === 'ai' 
+                      ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100' 
+                      : 'bg-gray-100 text-gray-500 text-xs'
+                  }`}>
+                    <p className="whitespace-pre-wrap leading-relaxed">{m.content}</p>
+                    {m.role === 'ai' && <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>}
+                  </div>
+                </div>
+              ))}
+              <div ref={chatEndRef} />
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ============================================ */}
+      {/* THÊM: Tab Shop */}
+      {/* ============================================ */}
+      {activeTab === 'shop' && (
+        <ShopTab selectedCity={selectedCity} language={language} />
+      )}
+
+      {/* ============================================ */}
+      {/* THÊM: Bottom Tab Bar */}
+      {/* ============================================ */}
+      <div className="bg-white border-t border-gray-200 z-[1002] safe-area-pb">
+        <div className="flex justify-around items-center py-2 px-4 max-w-md mx-auto">
+          <button
+            onClick={() => setActiveTab('tour')}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
+              activeTab === 'tour'
+                ? 'bg-blue-50 text-blue-600'
+                : 'text-gray-400 hover:text-gray-600'
+            }`}
+          >
+            <Map size={24} />
+            <span className="text-xs mt-1 font-medium">{t.tour}</span>
+          </button>
+          
+          <button
+            onClick={() => setActiveTab('shop')}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
+              activeTab === 'shop'
+                ? 'bg-blue-50 text-blue-600'
+                : 'text-gray-400 hover:text-gray-600'
+            }`}
+          >
+            <ShoppingBag size={24} />
+            <span className="text-xs mt-1 font-medium">{t.shop}</span>
+          </button>
         </div>
       </div>
     </div>
