@@ -1,8 +1,31 @@
 // app/api/chat/route.ts
+// Dùng Xenova/transformers để embed - chạy local, KHÔNG cần API key ngoài
+
 import { NextRequest, NextResponse } from "next/server";
 
-// ✅ KHÔNG khởi tạo supabase ở module level
-// Tạo trong function để tránh lỗi build khi env chưa có
+// ✅ Lazy load pipeline để tránh lỗi build
+let embeddingPipeline: any = null;
+
+async function getEmbedding(text: string): Promise<number[] | null> {
+  try {
+    if (!embeddingPipeline) {
+      // Dynamic import - chỉ load khi cần
+      const { pipeline } = await import("@xenova/transformers");
+      embeddingPipeline = await pipeline(
+        "feature-extraction",
+        "Xenova/all-MiniLM-L6-v2"
+      );
+    }
+    const output = await embeddingPipeline(text, {
+      pooling: "mean",
+      normalize: true,
+    });
+    return Array.from(output.data) as number[];
+  } catch (e) {
+    console.error("Embedding error:", e);
+    return null;
+  }
+}
 
 async function getSupabase() {
   const { createClient } = await import("@supabase/supabase-js");
@@ -10,34 +33,6 @@ async function getSupabase() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
-}
-
-async function embedQuery(text: string): Promise<number[] | null> {
-  try {
-    const hfKey = process.env.HUGGINGFACE_API_KEY;
-    if (!hfKey) return null;
-
-    const res = await fetch(
-      "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${hfKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ inputs: text }),
-      }
-    );
-
-    if (!res.ok) return null;
-    const data = await res.json();
-    // all-MiniLM-L6-v2 có thể trả về shape khác nhau
-    if (Array.isArray(data) && Array.isArray(data[0])) return data[0];
-    if (Array.isArray(data)) return data;
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 async function searchDocuments(
@@ -52,10 +47,7 @@ async function searchDocuments(
       current_location: locationId,
       match_count: limit,
     });
-    if (error) {
-      console.error("Supabase search error:", error);
-      return [];
-    }
+    if (error) { console.error("Supabase search error:", error); return []; }
     return (data || []).map((d: any) => String(d.content));
   } catch (e) {
     console.error("Search error:", e);
@@ -80,11 +72,7 @@ async function callCerebras(systemPrompt: string, userMessage: string): Promise<
       temperature: 0.7,
     }),
   });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Cerebras error ${res.status}: ${errText}`);
-  }
+  if (!res.ok) throw new Error(`Cerebras error ${res.status}`);
   const data = await res.json();
   return data.choices?.[0]?.message?.content || "";
 }
@@ -103,54 +91,40 @@ export async function POST(req: NextRequest) {
     }
 
     const query = userQuestion || contextPrompt || "";
-    if (!query) {
-      return NextResponse.json({ error: "Thiếu nội dung câu hỏi" }, { status: 400 });
-    }
+    if (!query) return NextResponse.json({ error: "Thiếu câu hỏi" }, { status: 400 });
 
     const isArrival = !!contextPrompt && !userQuestion;
 
-    // Bước 1: RAG - embed + tìm docs
+    // Bước 1: Embed + tìm docs
     let ragContext = "";
-    const embedding = await embedQuery(query);
+    const embedding = await getEmbedding(query);
 
-    if (embedding && embedding.length > 0) {
+    if (embedding) {
       const docs = await searchDocuments(embedding, locationId || null);
       if (docs.length > 0) {
         ragContext = docs.map((d, i) => `[${i + 1}] ${d}`).join("\n\n");
-        console.log(`RAG OK: ${docs.length} docs, location=${locationId}`);
+        console.log(`✅ RAG OK: ${docs.length} docs, location=${locationId}`);
       }
-    } else {
-      console.log("RAG skip: no embedding (HUGGINGFACE_API_KEY missing or error)");
     }
 
     // Bước 2: Build prompt
     const hasContext = ragContext.length > 0;
-
     const systemPrompt = language === "en"
       ? [
-          "You are a friendly, knowledgeable tour guide in Vietnam.",
-          hasContext
-            ? `Use ONLY the reference documents below:\n\n${ragContext}\n\nDo not invent information.`
-            : "Use your general knowledge to help.",
+          "You are a friendly tour guide in Vietnam.",
+          hasContext ? `Use ONLY these documents:\n\n${ragContext}\n\nDo not invent info.` : "Use your knowledge.",
           "Reply in English, 3-4 sentences, friendly with emojis.",
-          isArrival
-            ? "The tourist just ARRIVED here - welcome them and give a brief intro."
-            : "Answer the tourist's question directly.",
+          isArrival ? "Tourist just ARRIVED - welcome and intro briefly." : "Answer the question directly.",
         ].join("\n")
       : [
           "Bạn là hướng dẫn viên du lịch thân thiện tại Việt Nam.",
-          hasContext
-            ? `Chỉ dùng TÀI LIỆU bên dưới để trả lời:\n\n${ragContext}\n\nKhông bịa thêm thông tin.`
-            : "Dùng kiến thức chung để hỗ trợ du khách.",
+          hasContext ? `Chỉ dùng TÀI LIỆU này:\n\n${ragContext}\n\nKhông bịa thêm.` : "Dùng kiến thức chung.",
           "Trả lời tiếng Việt, 3-4 câu, thân thiện, có emoji.",
-          isArrival
-            ? "Khách vừa ĐẾN địa điểm - chào đón và giới thiệu tổng quan."
-            : "Trả lời trực tiếp câu hỏi của khách.",
+          isArrival ? "Khách vừa ĐẾN - chào đón và giới thiệu ngắn." : "Trả lời trực tiếp câu hỏi.",
         ].join("\n");
 
     // Bước 3: Gọi Cerebras
     const reply = await callCerebras(systemPrompt, query);
-
     return NextResponse.json({ reply });
 
   } catch (error: any) {
