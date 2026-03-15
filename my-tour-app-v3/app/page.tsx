@@ -46,7 +46,7 @@ export default function Home() {
       const destination = e.detail;
       setNavigatingTo(destination.name);
       setRouteInfo(null);
-      handleNewMessage(`🗺️ Bắt đầu chỉ đường đến ${destination.name}`, false);
+      handleNewMessage(`🗺️ Chỉ đường đến ${destination.name}`, false);
     };
 
     const handleRouteFound = (e: CustomEvent) => {
@@ -76,17 +76,17 @@ export default function Home() {
 
   const handleStartTour = () => {
     if (!isTracking) {
-      handleNewMessage('🔍 Đang xác định vị trí...', false);
+      handleNewMessage('🚀 Bắt đầu tour! Di chuyển đến các địa điểm để nghe thuyết minh.', false);
       
       navigator.geolocation.getCurrentPosition(
         (position) => {
-          const { latitude, longitude } = position.coords;
           setIsTracking(true);
-          setLocation({ lat: latitude, lng: longitude });
-          handleNewMessage(`✅ GPS OK! Bấm vào địa điểm để chỉ đường.`, false);
+          setLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
         },
         (error) => {
-          handleNewMessage(`❌ Lỗi GPS: ${error.message}`, false);
+          if (error.code === error.PERMISSION_DENIED) {
+            handleNewMessage('❌ Bạn chưa cấp quyền GPS. Vào Cài đặt → Quyền → Vị trí.', false);
+          }
         },
         { enableHighAccuracy: true, timeout: 10000 }
       );
