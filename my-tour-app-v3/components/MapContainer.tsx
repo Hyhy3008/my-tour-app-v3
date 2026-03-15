@@ -3,7 +3,7 @@
 import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef, memo } from 'react';
 
 const userIcon = L.icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
@@ -29,11 +29,9 @@ const locations = [
   { id: "sen", name: "Cánh đồng Sen", lat: 20.2200, lng: 105.9100, radius: 120 },
 ];
 
-// Thresholds
-const RECENTER_THRESHOLD = 20; // Chỉ recenter khi di chuyển > 20m
-const ROUTE_THRESHOLD = 50; // Chỉ tính lại route khi di chuyển > 50m
+const RECENTER_THRESHOLD = 30; // Tăng lên 30m
+const ROUTE_THRESHOLD = 100; // Tăng lên 100m
 
-// Hàm tính khoảng cách
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371e3;
   const φ1 = (lat1 * Math.PI) / 180;
@@ -44,8 +42,8 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Component recenter - chỉ recenter khi di chuyển > threshold
-function SmartRecenter({ lat, lng }: { lat: number; lng: number }) {
+// Memo component để không re-render khi không cần
+const SmartRecenter = memo(function SmartRecenter({ lat, lng }: { lat: number; lng: number }) {
   const map = useMap();
   const lastCenterRef = useRef<{ lat: number; lng: number } | null>(null);
 
@@ -58,52 +56,56 @@ function SmartRecenter({ lat, lng }: { lat: number; lng: number }) {
         lng
       );
       
-      // Chỉ recenter khi di chuyển > threshold
-      if (distance < RECENTER_THRESHOLD) {
-        return;
-      }
+      if (distance < RECENTER_THRESHOLD) return;
     }
 
     lastCenterRef.current = { lat, lng };
-    map.flyTo([lat, lng], map.getZoom(), { animate: true, duration: 0.5 });
+    // Tắt animation để tăng hiệu suất
+    map.setView([lat, lng], map.getZoom());
   }, [lat, lng, map]);
 
   return null;
-}
+});
 
 interface MapProps {
   location: { lat: number; lng: number } | null;
 }
 
-export default function MapComponent({ location }: MapProps) {
+function MapComponent({ location }: MapProps) {
   const [selectedDestination, setSelectedDestination] = useState<any>(null);
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const lastRouteLocationRef = useRef<{ lat: number; lng: number } | null>(null);
-  const hasNotifiedRef = useRef(false);
   const fetchingRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Lắng nghe event hủy navigation
+  // Cleanup khi unmount
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
+
   useEffect(() => {
     const handleCancel = () => {
       setSelectedDestination(null);
       setRouteCoords([]);
       lastRouteLocationRef.current = null;
-      window.dispatchEvent(new CustomEvent('navigation-cancelled'));
+      abortControllerRef.current?.abort();
     };
 
     window.addEventListener('cancel-navigation', handleCancel);
     return () => window.removeEventListener('cancel-navigation', handleCancel);
   }, []);
 
-  // Fetch route - chỉ khi di chuyển > threshold
   useEffect(() => {
     if (!location || !selectedDestination) {
       setRouteCoords([]);
       lastRouteLocationRef.current = null;
+      abortControllerRef.current?.abort();
       return;
     }
 
-    // Check xem có cần tính lại route không
+    // Check threshold
     if (lastRouteLocationRef.current) {
       const distance = calculateDistance(
         lastRouteLocationRef.current.lat,
@@ -112,21 +114,22 @@ export default function MapComponent({ location }: MapProps) {
         location.lng
       );
       
-      // Chưa di chuyển đủ xa -> không tính lại
-      if (distance < ROUTE_THRESHOLD) {
-        return;
-      }
+      if (distance < ROUTE_THRESHOLD) return;
     }
 
-    // Tránh fetch nhiều lần cùng lúc
     if (fetchingRef.current) return;
+
     fetchingRef.current = true;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = new AbortController();
 
     const fetchRoute = async () => {
       try {
         const url = `https://router.project-osrm.org/route/v1/driving/${location.lng},${location.lat};${selectedDestination.lng},${selectedDestination.lat}?overview=full&geometries=geojson`;
         
-        const response = await fetch(url);
+        const response = await fetch(url, { 
+          signal: abortControllerRef.current?.signal 
+        });
         const data = await response.json();
         
         if (data.routes && data.routes.length > 0) {
@@ -137,7 +140,6 @@ export default function MapComponent({ location }: MapProps) {
           setRouteCoords(coords);
           lastRouteLocationRef.current = { lat: location.lat, lng: location.lng };
           
-          // Cập nhật thông tin route
           window.dispatchEvent(new CustomEvent('route-found', { 
             detail: {
               distance: (route.distance / 1000).toFixed(1),
@@ -145,21 +147,17 @@ export default function MapComponent({ location }: MapProps) {
             }
           }));
         }
-      } catch (error) {
-        console.error('Routing error:', error);
+      } catch (error: any) {
+        if (error.name !== 'AbortError') {
+          console.error('Routing error:', error);
+        }
       } finally {
         fetchingRef.current = false;
       }
     };
 
     fetchRoute();
-  }, [location, selectedDestination]);
-
-  // Reset khi đổi destination
-  useEffect(() => {
-    hasNotifiedRef.current = false;
-    lastRouteLocationRef.current = null;
-  }, [selectedDestination?.id]);
+  }, [location?.lat, location?.lng, selectedDestination?.id]);
 
   const handleSelectDestination = (loc: any) => {
     if (selectedDestination?.id === loc.id) {
@@ -179,22 +177,24 @@ export default function MapComponent({ location }: MapProps) {
       zoom={13} 
       style={{ height: '100%', width: '100%' }} 
       zoomControl={false}
+      preferCanvas={true} // Dùng Canvas thay vì SVG để tăng hiệu suất
     >
       <TileLayer 
         url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-        attribution='&copy; OpenStreetMap &copy; CARTO'
         maxZoom={20}
+        updateWhenIdle={true} // Chỉ update khi map idle
+        keepBuffer={2}
       />
 
-      {/* Vẽ đường đi */}
       {routeCoords.length > 0 && (
-        <>
-          <Polyline positions={routeCoords} color="#1e40af" weight={8} opacity={0.4} />
-          <Polyline positions={routeCoords} color="#3b82f6" weight={5} opacity={0.9} />
-        </>
+        <Polyline 
+          positions={routeCoords} 
+          color="#3b82f6" 
+          weight={5} 
+          opacity={0.8}
+        />
       )}
 
-      {/* Các địa điểm */}
       {locations.map((loc) => (
         <div key={loc.id}>
           <Circle 
@@ -202,10 +202,8 @@ export default function MapComponent({ location }: MapProps) {
             radius={loc.radius} 
             pathOptions={{ 
               color: selectedDestination?.id === loc.id ? '#ef4444' : '#3b82f6',
-              fillColor: selectedDestination?.id === loc.id ? '#ef4444' : '#3b82f6',
-              fillOpacity: 0.15,
+              fillOpacity: 0.1,
               weight: 2,
-              dashArray: '5, 5'
             }} 
           />
           <Marker position={[loc.lat, loc.lng]} icon={locationIcon}>
@@ -229,13 +227,10 @@ export default function MapComponent({ location }: MapProps) {
         </div>
       ))}
 
-      {/* Vị trí người dùng */}
       {location && (
         <>
           <Marker position={[location.lat, location.lng]} icon={userIcon}>
-            <Popup>
-              <p className="font-bold text-center">🧭 Vị trí của bạn</p>
-            </Popup>
+            <Popup><p className="font-bold text-center">🧭 Vị trí của bạn</p></Popup>
           </Marker>
           <SmartRecenter lat={location.lat} lng={location.lng} />
         </>
@@ -243,3 +238,6 @@ export default function MapComponent({ location }: MapProps) {
     </MapContainer>
   );
 }
+
+// Export với memo để tránh re-render không cần thiết
+export default memo(MapComponent);
