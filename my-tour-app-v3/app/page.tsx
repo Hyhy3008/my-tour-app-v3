@@ -21,7 +21,7 @@ interface Message {
 }
 
 // ============================================
-// THÊM: Translations
+// Translations
 // ============================================
 const translations = {
   vi: {
@@ -42,6 +42,16 @@ const translations = {
     loadError: '⚠️ Không thể tải thông tin',
     arrivedAt: '📍 Đã đến',
     navigateTo: '🗺️ Chỉ đường đến',
+    greeting: 'Bắt đầu tour!',
+    ttsError: '❌ Không thể phát âm thanh',
+    voicesLoaded: '🔊 Voices loaded',
+    ttsStart: '🔊 TTS started speaking',
+    ttsEnd: '🔊 TTS finished',
+    ttsErrorEvent: '❌ TTS Error',
+    muted: '🔇 Muted, skipping TTS',
+    ttsNotSupported: '❌ TTS not supported',
+    speaking: '🔊 Speaking...',
+    done: '🔊 Done',
   },
   en: {
     tour: 'Tour',
@@ -61,6 +71,16 @@ const translations = {
     loadError: '⚠️ Cannot load information',
     arrivedAt: '📍 Arrived at',
     navigateTo: '🗺️ Navigate to',
+    greeting: 'Tour started!',
+    ttsError: '❌ Cannot play audio',
+    voicesLoaded: '🔊 Voices loaded',
+    ttsStart: '🔊 TTS started speaking',
+    ttsEnd: '🔊 TTS finished',
+    ttsErrorEvent: '❌ TTS Error',
+    muted: '🔇 Muted, skipping TTS',
+    ttsNotSupported: '❌ TTS not supported',
+    speaking: '🔊 Speaking...',
+    done: '🔊 Done',
   },
 };
 
@@ -70,16 +90,14 @@ type TabType = 'tour' | 'shop';
 
 export default function Home() {
   // ============================================
-  // THÊM: States mới
+  // State cho TTS
   // ============================================
   const [activeTab, setActiveTab] = useState<TabType>('tour');
   const [selectedCity, setSelectedCity] = useState<CityType>('ninh-binh');
   const [language, setLanguage] = useState<Language>('vi');
   const [showLangMenu, setShowLangMenu] = useState(false);
 
-  // ============================================
-  // GIỮ NGUYÊN: States gốc
-  // ============================================
+  // State gốc
   const [isTracking, setIsTracking] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -92,23 +110,74 @@ export default function Home() {
   const t = translations[language];
 
   // ============================================
-  // GIỮ NGUYÊN: Logic gốc
+  // TTS: Load voices when app starts
   // ============================================
+  useEffect(() => {
+    if ('speechSynthesis' in window) {
+      // Load voices
+      const loadVoices = () => {
+        const voices = window.speechSynthesis.getVoices();
+        console.log(t.voicesLoaded, voices.length);
+      };
+
+      loadVoices();
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+  }, []);
+
+  // Sync ref with state
   useEffect(() => {
     isMutedRef.current = isMuted;
   }, [isMuted]);
 
-  useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+  // ============================================
+  // TTS: Speak function
+  // ============================================
+  const speakText = useCallback((text: string) => {
+    console.log(t.ttsStart, text.substring(0, 50) + '...');
+
+    if (isMutedRef.current) {
+      console.log(t.muted);
+      return;
     }
-  }, []);
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
+    if (!('speechSynthesis' in window)) {
+      console.log(t.ttsNotSupported);
+      return;
+    }
 
-  // THÊM: Reset khi đổi city
+    // Cancel any ongoing speech
+    window.speechSynthesis.cancel();
+
+    // Create utterance
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = language === 'vi' ? 'vi-VN' : 'en-US';
+    utterance.rate = 0.9;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+
+    // Select voice
+    const voices = window.speechSynthesis.getVoices();
+    const targetLang = language === 'vi' ? 'vi' : 'en';
+    const voice = voices.find(v => v.lang.toLowerCase().startsWith(targetLang));
+    if (voice) {
+      utterance.voice = voice;
+      console.log('Using voice:', voice.name);
+    }
+
+    // Debug events
+    utterance.onstart = () => console.log(t.ttsStart);
+    utterance.onend = () => console.log(t.ttsEnd);
+    utterance.onerror = (e) => console.error(t.ttsErrorEvent, e.error);
+
+    // Speak
+    window.speechSynthesis.speak(utterance);
+    console.log(t.speaking);
+  }, [language, t]);
+
+  // ============================================
+  // Reset when city changes
+  // ============================================
   useEffect(() => {
     if (isTracking) {
       setIsTracking(false);
@@ -121,20 +190,17 @@ export default function Home() {
     window.speechSynthesis?.cancel();
   }, [selectedCity]);
 
+  // ============================================
+  // Add message
+  // ============================================
   const addMessage = useCallback((msg: string, isAi: boolean) => {
     const time = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
     setMessages(prev => [...prev, { role: isAi ? 'ai' : 'system', content: msg, time }]);
   }, []);
 
-  const speakText = useCallback((text: string) => {
-    if (isMutedRef.current || !('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = language === 'vi' ? 'vi-VN' : 'en-US';
-    u.rate = 0.9;
-    window.speechSynthesis.speak(u);
-  }, [language]);
-
+  // ============================================
+  // Fetch AI
+  // ============================================
   const fetchAI = useCallback(async (prompt: string) => {
     try {
       const res = await fetch('/api/chat', {
@@ -142,17 +208,25 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contextPrompt: prompt, language }),
       });
+
       if (res.ok) {
         const data = await res.json();
         addMessage(data.reply, true);
         speakText(data.reply);
+      } else {
+        const error = await res.json();
+        console.error('❌ API Error:', error);
+        addMessage(t.loadError, false);
       }
     } catch (e) {
-      console.error('AI Error:', e);
+      console.error('❌ Fetch Error:', e);
       addMessage(t.loadError, false);
     }
   }, [addMessage, speakText, language, t.loadError]);
 
+  // ============================================
+  // Event listeners
+  // ============================================
   useEffect(() => {
     const handleNavigateTo = (e: CustomEvent) => {
       setNavigatingTo(e.detail.name);
@@ -188,12 +262,24 @@ export default function Home() {
     };
   }, [addMessage, fetchAI, t]);
 
+  // ============================================
+  // Start/Stop Tour
+  // ============================================
   const handleStartTour = () => {
     if (!isTracking) {
       navigator.geolocation.getCurrentPosition(
         () => {
           setIsTracking(true);
           addMessage(t.startTour, false);
+
+          // Unlock TTS by saying a greeting
+          if ('speechSynthesis' in window && !isMuted) {
+            const greeting = language === 'vi' ? t.greeting : 'Tour started!';
+            const u = new SpeechSynthesisUtterance(greeting);
+            u.lang = language === 'vi' ? 'vi-VN' : 'en-US';
+            u.rate = 0.9;
+            window.speechSynthesis.speak(u);
+          }
         },
         (error) => {
           if (error.code === error.PERMISSION_DENIED) {
@@ -212,6 +298,9 @@ export default function Home() {
     }
   };
 
+  // ============================================
+  // Cancel Navigation
+  // ============================================
   const handleCancelNavigation = () => {
     setNavigatingTo(null);
     setRouteInfo(null);
@@ -219,6 +308,9 @@ export default function Home() {
     window.dispatchEvent(new CustomEvent('cancel-navigation'));
   };
 
+  // ============================================
+  // Toggle Mute
+  // ============================================
   const toggleMute = () => {
     setIsMuted(prev => {
       if (!prev) window.speechSynthesis?.cancel();
@@ -227,14 +319,28 @@ export default function Home() {
   };
 
   // ============================================
-  // RENDER
+  // Scroll to bottom when new message
+  // ============================================
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length]);
+
+  // ============================================
+  // Service Worker
+  // ============================================
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+  }, []);
+
+  // ============================================
+  // Render
   // ============================================
   return (
     <div className="flex flex-col h-[100dvh] bg-gray-100 overflow-hidden relative">
       
-      {/* ============================================ */}
-      {/* THÊM: Language Selector (góc phải) */}
-      {/* ============================================ */}
+      {/* Language Selector */}
       <div className="absolute top-4 right-4 z-[1002]">
         <button
           onClick={() => setShowLangMenu(!showLangMenu)}
@@ -262,12 +368,10 @@ export default function Home() {
         )}
       </div>
 
-      {/* ============================================ */}
-      {/* Tab Tour - GIỮ NGUYÊN GIAO DIỆN GỐC */}
-      {/* ============================================ */}
+      {/* Tab Tour - Giữ nguyên giao diện */}
       {activeTab === 'tour' && (
         <>
-          {/* THÊM: City Selector */}
+          {/* City Selector */}
           <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[1001]">
             <div className="bg-white/95 backdrop-blur-md rounded-full p-1 shadow-lg flex gap-1">
               <button
@@ -293,7 +397,7 @@ export default function Home() {
             </div>
           </div>
 
-          {/* GIỮ NGUYÊN: Header gốc */}
+          {/* Header */}
           <div className="absolute top-0 left-0 right-20 z-[1000] p-3">
             <div className="bg-white/95 backdrop-blur-md shadow-lg rounded-2xl p-3 flex justify-between items-center">
               <div className="flex items-center gap-3">
@@ -306,7 +410,7 @@ export default function Home() {
                       {selectedCity === 'ninh-binh' ? 'Ninh Bình' : 'Hà Nội'} Tour
                     </h1>
                     <span className="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full flex items-center gap-1">
-                      <CheckCircle size={12} /> DEV
+                      <CheckCircle size={12} /> {selectedCity === 'hanoi' ? 'EN' : 'VI'}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -344,7 +448,7 @@ export default function Home() {
             </div>
           </div>
 
-          {/* GIỮ NGUYÊN: Route Banner */}
+          {/* Route Banner */}
           {navigatingTo && routeInfo && (
             <div className="absolute top-28 left-0 right-0 z-[999] p-3">
               <div className="bg-blue-500/95 backdrop-blur text-white rounded-2xl p-3 max-w-sm mx-auto shadow-lg">
@@ -365,12 +469,12 @@ export default function Home() {
             </div>
           )}
 
-          {/* GIỮ NGUYÊN: Map - THÊM prop selectedCity */}
+          {/* Map */}
           <div className="flex-grow z-0">
-            <MapContainer isTracking={isTracking} selectedCity={selectedCity} language={language} />
+            <MapContainer isTracking={isTracking} selectedCity={selectedCity} />
           </div>
 
-          {/* GIỮ NGUYÊN: Chat Panel */}
+          {/* Chat Panel */}
           <div className="h-[28vh] bg-white rounded-t-3xl shadow-2xl z-[1000] flex flex-col">
             <div className="flex justify-center pt-2 pb-1">
               <div className="w-10 h-1 bg-gray-300 rounded-full" />
@@ -401,16 +505,12 @@ export default function Home() {
         </>
       )}
 
-      {/* ============================================ */}
-      {/* THÊM: Tab Shop */}
-      {/* ============================================ */}
+      {/* Tab Shop */}
       {activeTab === 'shop' && (
         <ShopTab selectedCity={selectedCity} language={language} />
       )}
 
-      {/* ============================================ */}
-      {/* THÊM: Bottom Tab Bar */}
-      {/* ============================================ */}
+      {/* Bottom Tab Bar */}
       <div className="bg-white border-t border-gray-200 z-[1002] safe-area-pb">
         <div className="flex justify-around items-center py-2 px-4 max-w-md mx-auto">
           <button
