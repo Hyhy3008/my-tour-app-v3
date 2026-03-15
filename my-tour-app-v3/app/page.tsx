@@ -22,22 +22,42 @@ interface Message {
 
 const translations = {
   vi: {
-    tour: 'Tour', shop: 'Mua sắm', tracking: 'Đang theo dõi', waiting: 'Chờ kích hoạt',
-    points: 'điểm', navigatingTo: 'Đang dẫn đường đến', km: 'km', min: 'phút',
-    welcome: 'Chào mừng!', tapToStart: 'Bấm Navigation để bắt đầu tour',
+    tour: 'Tour',
+    shop: 'Mua sắm',
+    tracking: 'Đang theo dõi',
+    waiting: 'Chờ kích hoạt',
+    points: 'điểm',
+    navigatingTo: 'Đang dẫn đường đến',
+    km: 'km',
+    min: 'phút',
+    welcome: 'Chào mừng!',
+    tapToStart: 'Bấm Navigation để bắt đầu tour',
     startTour: '🚀 Bắt đầu tour! Di chuyển đến các địa điểm để nghe thuyết minh.',
-    stopTour: '⏹️ Đã dừng tour.', cancelNav: '❌ Đã hủy chỉ đường',
+    stopTour: '⏹️ Đã dừng tour.',
+    cancelNav: '❌ Đã hủy chỉ đường',
     gpsError: '❌ Bạn cần cấp quyền GPS. Vào Cài đặt → Quyền → Vị trí.',
-    loadError: '⚠️ Không thể tải thông tin', arrivedAt: '📍 Đã đến', navigateTo: '🗺️ Chỉ đường đến',
+    loadError: '⚠️ Không thể tải thông tin',
+    arrivedAt: '📍 Đã đến',
+    navigateTo: '🗺️ Chỉ đường đến',
   },
   en: {
-    tour: 'Tour', shop: 'Shop', tracking: 'Tracking', waiting: 'Ready',
-    points: 'spots', navigatingTo: 'Navigating to', km: 'km', min: 'min',
-    welcome: 'Welcome!', tapToStart: 'Tap Navigation to start tour',
+    tour: 'Tour',
+    shop: 'Shop',
+    tracking: 'Tracking',
+    waiting: 'Ready',
+    points: 'spots',
+    navigatingTo: 'Navigating to',
+    km: 'km',
+    min: 'min',
+    welcome: 'Welcome!',
+    tapToStart: 'Tap Navigation to start tour',
     startTour: '🚀 Tour started! Move to locations to hear the guide.',
-    stopTour: '⏹️ Tour stopped.', cancelNav: '❌ Navigation cancelled',
+    stopTour: '⏹️ Tour stopped.',
+    cancelNav: '❌ Navigation cancelled',
     gpsError: '❌ Please enable GPS in Settings → Permissions → Location.',
-    loadError: '⚠️ Cannot load information', arrivedAt: '📍 Arrived at', navigateTo: '🗺️ Navigate to',
+    loadError: '⚠️ Cannot load information',
+    arrivedAt: '📍 Arrived at',
+    navigateTo: '🗺️ Navigate to',
   },
 };
 
@@ -58,52 +78,61 @@ export default function Home() {
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // ✅ FIX 1: Dùng ref cho CẢ isMuted VÀ language
-  // → speakText luôn đọc giá trị mới nhất, tránh stale closure
+  // Refs để tránh stale closure
   const isMutedRef = useRef(isMuted);
   const languageRef = useRef(language);
+  // Ref giữ audio đang phát
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
   useEffect(() => { languageRef.current = language; }, [language]);
 
   const t = translations[language];
 
-  // ✅ FIX 2: Load voices sớm khi app start
-  useEffect(() => {
-    if (!('speechSynthesis' in window)) return;
-    const load = () => window.speechSynthesis.getVoices();
-    load();
-    window.speechSynthesis.onvoiceschanged = load;
-  }, []);
-
-  // ✅ FIX 3: speakText KHÔNG còn depend vào language state
-  // → Đọc từ languageRef.current thay vì closure
-  // → Không bao giờ stale
-  const speakText = useCallback((text: string) => {
+  // ============================================
+  // Edge TTS: gọi /api/tts → nhận MP3 → play
+  // Không dùng browser speechSynthesis nữa
+  // Hoạt động tốt trên iOS, Android, Desktop
+  // ============================================
+  const speakText = useCallback(async (text: string) => {
     if (isMutedRef.current) return;
-    if (!('speechSynthesis' in window)) return;
 
-    const lang = languageRef.current; // ✅ luôn mới nhất
+    try {
+      // Dừng audio đang phát nếu có
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
 
-    // ✅ FIX 4: Dùng setTimeout sau cancel() để tránh bị nuốt trên Android
-    window.speechSynthesis.cancel();
-    setTimeout(() => {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = lang === 'vi' ? 'vi-VN' : 'en-US';
-      utterance.rate = 0.9;
-      utterance.pitch = 1;
-      utterance.volume = 1;
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, language: languageRef.current }),
+      });
 
-      // Chọn voice phù hợp
-      const voices = window.speechSynthesis.getVoices();
-      const targetLang = lang === 'vi' ? 'vi' : 'en';
-      const voice = voices.find(v => v.lang.toLowerCase().startsWith(targetLang));
-      if (voice) utterance.voice = voice;
+      if (!res.ok) throw new Error(`TTS API error: ${res.status}`);
 
-      utterance.onerror = (e) => console.error('TTS Error:', e.error);
-      window.speechSynthesis.speak(utterance);
-    }, 100); // 100ms đủ để cancel() hoàn thành
-  }, []); // ✅ dependency rỗng vì dùng refs
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        audioRef.current = null;
+      };
+
+      audio.onerror = (e) => {
+        console.error('Audio play error:', e);
+        URL.revokeObjectURL(url);
+        audioRef.current = null;
+      };
+
+      await audio.play();
+    } catch (e) {
+      console.error('speakText error:', e);
+    }
+  }, []); // dependency rỗng vì chỉ dùng refs
 
   // Reset khi đổi city
   useEffect(() => {
@@ -115,7 +144,10 @@ export default function Home() {
     setVisitedCount(0);
     setRouteInfo(null);
     setNavigatingTo(null);
-    window.speechSynthesis?.cancel();
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
   }, [selectedCity]);
 
   const addMessage = useCallback((msg: string, isAi: boolean) => {
@@ -123,9 +155,9 @@ export default function Home() {
     setMessages(prev => [...prev, { role: isAi ? 'ai' : 'system', content: msg, time }]);
   }, []);
 
-  // ✅ FIX 5: fetchAI cũng dùng languageRef thay vì language state
+  // fetchAI dùng languageRef để không bao giờ stale
   const fetchAI = useCallback(async (prompt: string) => {
-    const lang = languageRef.current; // ✅ luôn mới nhất
+    const lang = languageRef.current;
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -142,23 +174,26 @@ export default function Home() {
     } catch {
       addMessage(translations[lang].loadError, false);
     }
-  }, [addMessage, speakText]); // ✅ không depend vào language state
+  }, [addMessage, speakText]);
 
-  // ✅ FIX 6: Event listeners stable - không re-register khi language đổi
+  // Event listeners
   useEffect(() => {
     const handleNavigateTo = (e: CustomEvent) => {
       setNavigatingTo(e.detail.name);
       setRouteInfo(null);
-      const lang = languageRef.current;
-      addMessage(`${translations[lang].navigateTo} ${e.detail.name}`, false);
+      addMessage(`${translations[languageRef.current].navigateTo} ${e.detail.name}`, false);
     };
-    const handleRouteFound = (e: CustomEvent) => { setRouteInfo(e.detail); };
-    const handleCancelNav = () => { setNavigatingTo(null); setRouteInfo(null); };
+    const handleRouteFound = (e: CustomEvent) => {
+      setRouteInfo(e.detail);
+    };
+    const handleCancelNav = () => {
+      setNavigatingTo(null);
+      setRouteInfo(null);
+    };
     const handleLocationArrived = (e: CustomEvent) => {
-      const lang = languageRef.current;
       setVisitedCount(prev => prev + 1);
-      addMessage(`${translations[lang].arrivedAt} ${e.detail.name}`, false);
-      fetchAI(e.detail.prompt); // ✅ fetchAI stable, không stale
+      addMessage(`${translations[languageRef.current].arrivedAt} ${e.detail.name}`, false);
+      fetchAI(e.detail.prompt);
     };
 
     window.addEventListener('navigate-to', handleNavigateTo as EventListener);
@@ -172,7 +207,7 @@ export default function Home() {
       window.removeEventListener('navigation-cancelled', handleCancelNav);
       window.removeEventListener('location-arrived', handleLocationArrived as EventListener);
     };
-  }, [addMessage, fetchAI]); // ✅ stable deps
+  }, [addMessage, fetchAI]);
 
   const handleStartTour = () => {
     if (!isTracking) {
@@ -180,22 +215,12 @@ export default function Home() {
         () => {
           setIsTracking(true);
           addMessage(t.startTour, false);
-
-          // ✅ FIX 7: Unlock TTS trên iOS bằng cách speak ngay khi user bấm nút
-          // iOS chỉ cho phép TTS từ user gesture trực tiếp
-          // Sau khi unlock lần đầu, các lần sau (từ GPS callback) sẽ hoạt động
-          if ('speechSynthesis' in window && !isMutedRef.current) {
-            const lang = languageRef.current;
-            const u = new SpeechSynthesisUtterance(
-              lang === 'vi' ? 'Bắt đầu tour!' : 'Tour started!'
-            );
-            u.lang = lang === 'vi' ? 'vi-VN' : 'en-US';
-            u.volume = 0.1; // Rất nhỏ, chỉ để unlock
-            window.speechSynthesis.speak(u);
-          }
+          // Edge TTS dùng Audio element → không cần unlock iOS như browser TTS
         },
         (error) => {
-          if (error.code === error.PERMISSION_DENIED) addMessage(t.gpsError, false);
+          if (error.code === error.PERMISSION_DENIED) {
+            addMessage(t.gpsError, false);
+          }
         },
         { enableHighAccuracy: false, timeout: 10000 }
       );
@@ -204,7 +229,10 @@ export default function Home() {
       setNavigatingTo(null);
       setRouteInfo(null);
       addMessage(t.stopTour, false);
-      window.speechSynthesis?.cancel();
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
       window.dispatchEvent(new CustomEvent('stop-tracking'));
     }
   };
@@ -218,7 +246,13 @@ export default function Home() {
 
   const toggleMute = () => {
     setIsMuted(prev => {
-      if (!prev) window.speechSynthesis?.cancel();
+      if (!prev) {
+        // Đang bật → tắt tiếng: dừng audio đang phát
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current = null;
+        }
+      }
       return !prev;
     });
   };
@@ -247,12 +281,16 @@ export default function Home() {
         </button>
         {showLangMenu && (
           <div className="absolute right-0 mt-2 bg-white rounded-xl shadow-lg overflow-hidden">
-            <button onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
-              className={`w-full px-4 py-2 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}>
+            <button
+              onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
+              className={`w-full px-4 py-2 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}
+            >
               🇻🇳 Tiếng Việt
             </button>
-            <button onClick={() => { setLanguage('en'); setShowLangMenu(false); }}
-              className={`w-full px-4 py-2 text-left text-sm ${language === 'en' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}>
+            <button
+              onClick={() => { setLanguage('en'); setShowLangMenu(false); }}
+              className={`w-full px-4 py-2 text-left text-sm ${language === 'en' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}
+            >
               🇬🇧 English
             </button>
           </div>
@@ -264,12 +302,20 @@ export default function Home() {
           {/* City Selector */}
           <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[1001]">
             <div className="bg-white/95 backdrop-blur-md rounded-full p-1 shadow-lg flex gap-1">
-              <button onClick={() => setSelectedCity('ninh-binh')}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${selectedCity === 'ninh-binh' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
+              <button
+                onClick={() => setSelectedCity('ninh-binh')}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                  selectedCity === 'ninh-binh' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
                 🏞️ Ninh Bình
               </button>
-              <button onClick={() => setSelectedCity('hanoi')}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${selectedCity === 'hanoi' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
+              <button
+                onClick={() => setSelectedCity('hanoi')}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                  selectedCity === 'hanoi' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
                 🏛️ Hà Nội
               </button>
             </div>
@@ -305,12 +351,20 @@ export default function Home() {
                 </div>
               </div>
               <div className="flex gap-2">
-                <button onClick={toggleMute}
-                  className={`p-3 rounded-full transition-colors ${isMuted ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-600'}`}>
+                <button
+                  onClick={toggleMute}
+                  className={`p-3 rounded-full transition-colors ${isMuted ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-600'}`}
+                >
                   {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
                 </button>
-                <button onClick={handleStartTour}
-                  className={`p-3 rounded-full shadow-lg transition-all ${isTracking ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white' : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'}`}>
+                <button
+                  onClick={handleStartTour}
+                  className={`p-3 rounded-full shadow-lg transition-all ${
+                    isTracking
+                      ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white'
+                      : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'
+                  }`}
+                >
                   <Navigation size={22} className={isTracking ? 'animate-pulse' : ''} />
                 </button>
               </div>
@@ -381,13 +435,21 @@ export default function Home() {
       {/* Bottom Tab Bar */}
       <div className="bg-white border-t border-gray-200 z-[1002]">
         <div className="flex justify-around items-center py-2 px-4 max-w-md mx-auto">
-          <button onClick={() => setActiveTab('tour')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
+          <button
+            onClick={() => setActiveTab('tour')}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
+              activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'
+            }`}
+          >
             <Map size={24} />
             <span className="text-xs mt-1 font-medium">{t.tour}</span>
           </button>
-          <button onClick={() => setActiveTab('shop')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
+          <button
+            onClick={() => setActiveTab('shop')}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
+              activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'
+            }`}
+          >
             <ShoppingBag size={24} />
             <span className="text-xs mt-1 font-medium">{t.shop}</span>
           </button>
