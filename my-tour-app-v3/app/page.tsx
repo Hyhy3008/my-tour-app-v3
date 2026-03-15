@@ -20,67 +20,24 @@ interface Message {
   time: string;
 }
 
-// ============================================
-// Translations
-// ============================================
 const translations = {
   vi: {
-    tour: 'Tour',
-    shop: 'Mua sắm',
-    tracking: 'Đang theo dõi',
-    waiting: 'Chờ kích hoạt',
-    points: 'điểm',
-    navigatingTo: 'Đang dẫn đường đến',
-    km: 'km',
-    min: 'phút',
-    welcome: 'Chào mừng!',
-    tapToStart: 'Bấm Navigation để bắt đầu tour',
+    tour: 'Tour', shop: 'Mua sắm', tracking: 'Đang theo dõi', waiting: 'Chờ kích hoạt',
+    points: 'điểm', navigatingTo: 'Đang dẫn đường đến', km: 'km', min: 'phút',
+    welcome: 'Chào mừng!', tapToStart: 'Bấm Navigation để bắt đầu tour',
     startTour: '🚀 Bắt đầu tour! Di chuyển đến các địa điểm để nghe thuyết minh.',
-    stopTour: '⏹️ Đã dừng tour.',
-    cancelNav: '❌ Đã hủy chỉ đường',
+    stopTour: '⏹️ Đã dừng tour.', cancelNav: '❌ Đã hủy chỉ đường',
     gpsError: '❌ Bạn cần cấp quyền GPS. Vào Cài đặt → Quyền → Vị trí.',
-    loadError: '⚠️ Không thể tải thông tin',
-    arrivedAt: '📍 Đã đến',
-    navigateTo: '🗺️ Chỉ đường đến',
-    greeting: 'Bắt đầu tour!',
-    ttsError: '❌ Không thể phát âm thanh',
-    voicesLoaded: '🔊 Voices loaded',
-    ttsStart: '🔊 TTS started speaking',
-    ttsEnd: '🔊 TTS finished',
-    ttsErrorEvent: '❌ TTS Error',
-    muted: '🔇 Muted, skipping TTS',
-    ttsNotSupported: '❌ TTS not supported',
-    speaking: '🔊 Speaking...',
-    done: '🔊 Done',
+    loadError: '⚠️ Không thể tải thông tin', arrivedAt: '📍 Đã đến', navigateTo: '🗺️ Chỉ đường đến',
   },
   en: {
-    tour: 'Tour',
-    shop: 'Shop',
-    tracking: 'Tracking',
-    waiting: 'Ready',
-    points: 'spots',
-    navigatingTo: 'Navigating to',
-    km: 'km',
-    min: 'min',
-    welcome: 'Welcome!',
-    tapToStart: 'Tap Navigation to start tour',
+    tour: 'Tour', shop: 'Shop', tracking: 'Tracking', waiting: 'Ready',
+    points: 'spots', navigatingTo: 'Navigating to', km: 'km', min: 'min',
+    welcome: 'Welcome!', tapToStart: 'Tap Navigation to start tour',
     startTour: '🚀 Tour started! Move to locations to hear the guide.',
-    stopTour: '⏹️ Tour stopped.',
-    cancelNav: '❌ Navigation cancelled',
+    stopTour: '⏹️ Tour stopped.', cancelNav: '❌ Navigation cancelled',
     gpsError: '❌ Please enable GPS in Settings → Permissions → Location.',
-    loadError: '⚠️ Cannot load information',
-    arrivedAt: '📍 Arrived at',
-    navigateTo: '🗺️ Navigate to',
-    greeting: 'Tour started!',
-    ttsError: '❌ Cannot play audio',
-    voicesLoaded: '🔊 Voices loaded',
-    ttsStart: '🔊 TTS started speaking',
-    ttsEnd: '🔊 TTS finished',
-    ttsErrorEvent: '❌ TTS Error',
-    muted: '🔇 Muted, skipping TTS',
-    ttsNotSupported: '❌ TTS not supported',
-    speaking: '🔊 Speaking...',
-    done: '🔊 Done',
+    loadError: '⚠️ Cannot load information', arrivedAt: '📍 Arrived at', navigateTo: '🗺️ Navigate to',
   },
 };
 
@@ -89,15 +46,10 @@ type CityType = 'ninh-binh' | 'hanoi';
 type TabType = 'tour' | 'shop';
 
 export default function Home() {
-  // ============================================
-  // State cho TTS
-  // ============================================
   const [activeTab, setActiveTab] = useState<TabType>('tour');
   const [selectedCity, setSelectedCity] = useState<CityType>('ninh-binh');
   const [language, setLanguage] = useState<Language>('vi');
   const [showLangMenu, setShowLangMenu] = useState(false);
-
-  // State gốc
   const [isTracking, setIsTracking] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -105,79 +57,55 @@ export default function Home() {
   const [routeInfo, setRouteInfo] = useState<{ distance: string; time: number } | null>(null);
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // ✅ FIX 1: Dùng ref cho CẢ isMuted VÀ language
+  // → speakText luôn đọc giá trị mới nhất, tránh stale closure
   const isMutedRef = useRef(isMuted);
+  const languageRef = useRef(language);
+
+  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
+  useEffect(() => { languageRef.current = language; }, [language]);
 
   const t = translations[language];
 
-  // ============================================
-  // TTS: Load voices when app starts
-  // ============================================
+  // ✅ FIX 2: Load voices sớm khi app start
   useEffect(() => {
-    if ('speechSynthesis' in window) {
-      // Load voices
-      const loadVoices = () => {
-        const voices = window.speechSynthesis.getVoices();
-        console.log(t.voicesLoaded, voices.length);
-      };
-
-      loadVoices();
-      window.speechSynthesis.onvoiceschanged = loadVoices;
-    }
+    if (!('speechSynthesis' in window)) return;
+    const load = () => window.speechSynthesis.getVoices();
+    load();
+    window.speechSynthesis.onvoiceschanged = load;
   }, []);
 
-  // Sync ref with state
-  useEffect(() => {
-    isMutedRef.current = isMuted;
-  }, [isMuted]);
-
-  // ============================================
-  // TTS: Speak function
-  // ============================================
+  // ✅ FIX 3: speakText KHÔNG còn depend vào language state
+  // → Đọc từ languageRef.current thay vì closure
+  // → Không bao giờ stale
   const speakText = useCallback((text: string) => {
-    console.log(t.ttsStart, text.substring(0, 50) + '...');
+    if (isMutedRef.current) return;
+    if (!('speechSynthesis' in window)) return;
 
-    if (isMutedRef.current) {
-      console.log(t.muted);
-      return;
-    }
+    const lang = languageRef.current; // ✅ luôn mới nhất
 
-    if (!('speechSynthesis' in window)) {
-      console.log(t.ttsNotSupported);
-      return;
-    }
-
-    // Cancel any ongoing speech
+    // ✅ FIX 4: Dùng setTimeout sau cancel() để tránh bị nuốt trên Android
     window.speechSynthesis.cancel();
+    setTimeout(() => {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = lang === 'vi' ? 'vi-VN' : 'en-US';
+      utterance.rate = 0.9;
+      utterance.pitch = 1;
+      utterance.volume = 1;
 
-    // Create utterance
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = language === 'vi' ? 'vi-VN' : 'en-US';
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
-    utterance.volume = 1;
+      // Chọn voice phù hợp
+      const voices = window.speechSynthesis.getVoices();
+      const targetLang = lang === 'vi' ? 'vi' : 'en';
+      const voice = voices.find(v => v.lang.toLowerCase().startsWith(targetLang));
+      if (voice) utterance.voice = voice;
 
-    // Select voice
-    const voices = window.speechSynthesis.getVoices();
-    const targetLang = language === 'vi' ? 'vi' : 'en';
-    const voice = voices.find(v => v.lang.toLowerCase().startsWith(targetLang));
-    if (voice) {
-      utterance.voice = voice;
-      console.log('Using voice:', voice.name);
-    }
+      utterance.onerror = (e) => console.error('TTS Error:', e.error);
+      window.speechSynthesis.speak(utterance);
+    }, 100); // 100ms đủ để cancel() hoàn thành
+  }, []); // ✅ dependency rỗng vì dùng refs
 
-    // Debug events
-    utterance.onstart = () => console.log(t.ttsStart);
-    utterance.onend = () => console.log(t.ttsEnd);
-    utterance.onerror = (e) => console.error(t.ttsErrorEvent, e.error);
-
-    // Speak
-    window.speechSynthesis.speak(utterance);
-    console.log(t.speaking);
-  }, [language, t]);
-
-  // ============================================
-  // Reset when city changes
-  // ============================================
+  // Reset khi đổi city
   useEffect(() => {
     if (isTracking) {
       setIsTracking(false);
@@ -190,63 +118,47 @@ export default function Home() {
     window.speechSynthesis?.cancel();
   }, [selectedCity]);
 
-  // ============================================
-  // Add message
-  // ============================================
   const addMessage = useCallback((msg: string, isAi: boolean) => {
     const time = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
     setMessages(prev => [...prev, { role: isAi ? 'ai' : 'system', content: msg, time }]);
   }, []);
 
-  // ============================================
-  // Fetch AI
-  // ============================================
+  // ✅ FIX 5: fetchAI cũng dùng languageRef thay vì language state
   const fetchAI = useCallback(async (prompt: string) => {
+    const lang = languageRef.current; // ✅ luôn mới nhất
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contextPrompt: prompt, language }),
+        body: JSON.stringify({ contextPrompt: prompt, language: lang }),
       });
-
       if (res.ok) {
         const data = await res.json();
         addMessage(data.reply, true);
         speakText(data.reply);
       } else {
-        const error = await res.json();
-        console.error('❌ API Error:', error);
-        addMessage(t.loadError, false);
+        addMessage(translations[lang].loadError, false);
       }
-    } catch (e) {
-      console.error('❌ Fetch Error:', e);
-      addMessage(t.loadError, false);
+    } catch {
+      addMessage(translations[lang].loadError, false);
     }
-  }, [addMessage, speakText, language, t.loadError]);
+  }, [addMessage, speakText]); // ✅ không depend vào language state
 
-  // ============================================
-  // Event listeners
-  // ============================================
+  // ✅ FIX 6: Event listeners stable - không re-register khi language đổi
   useEffect(() => {
     const handleNavigateTo = (e: CustomEvent) => {
       setNavigatingTo(e.detail.name);
       setRouteInfo(null);
-      addMessage(`${t.navigateTo} ${e.detail.name}`, false);
+      const lang = languageRef.current;
+      addMessage(`${translations[lang].navigateTo} ${e.detail.name}`, false);
     };
-
-    const handleRouteFound = (e: CustomEvent) => {
-      setRouteInfo(e.detail);
-    };
-
-    const handleCancelNav = () => {
-      setNavigatingTo(null);
-      setRouteInfo(null);
-    };
-
+    const handleRouteFound = (e: CustomEvent) => { setRouteInfo(e.detail); };
+    const handleCancelNav = () => { setNavigatingTo(null); setRouteInfo(null); };
     const handleLocationArrived = (e: CustomEvent) => {
+      const lang = languageRef.current;
       setVisitedCount(prev => prev + 1);
-      addMessage(`${t.arrivedAt} ${e.detail.name}`, false);
-      fetchAI(e.detail.prompt);
+      addMessage(`${translations[lang].arrivedAt} ${e.detail.name}`, false);
+      fetchAI(e.detail.prompt); // ✅ fetchAI stable, không stale
     };
 
     window.addEventListener('navigate-to', handleNavigateTo as EventListener);
@@ -260,11 +172,8 @@ export default function Home() {
       window.removeEventListener('navigation-cancelled', handleCancelNav);
       window.removeEventListener('location-arrived', handleLocationArrived as EventListener);
     };
-  }, [addMessage, fetchAI, t]);
+  }, [addMessage, fetchAI]); // ✅ stable deps
 
-  // ============================================
-  // Start/Stop Tour
-  // ============================================
   const handleStartTour = () => {
     if (!isTracking) {
       navigator.geolocation.getCurrentPosition(
@@ -272,19 +181,21 @@ export default function Home() {
           setIsTracking(true);
           addMessage(t.startTour, false);
 
-          // Unlock TTS by saying a greeting
-          if ('speechSynthesis' in window && !isMuted) {
-            const greeting = language === 'vi' ? t.greeting : 'Tour started!';
-            const u = new SpeechSynthesisUtterance(greeting);
-            u.lang = language === 'vi' ? 'vi-VN' : 'en-US';
-            u.rate = 0.9;
+          // ✅ FIX 7: Unlock TTS trên iOS bằng cách speak ngay khi user bấm nút
+          // iOS chỉ cho phép TTS từ user gesture trực tiếp
+          // Sau khi unlock lần đầu, các lần sau (từ GPS callback) sẽ hoạt động
+          if ('speechSynthesis' in window && !isMutedRef.current) {
+            const lang = languageRef.current;
+            const u = new SpeechSynthesisUtterance(
+              lang === 'vi' ? 'Bắt đầu tour!' : 'Tour started!'
+            );
+            u.lang = lang === 'vi' ? 'vi-VN' : 'en-US';
+            u.volume = 0.1; // Rất nhỏ, chỉ để unlock
             window.speechSynthesis.speak(u);
           }
         },
         (error) => {
-          if (error.code === error.PERMISSION_DENIED) {
-            addMessage(t.gpsError, false);
-          }
+          if (error.code === error.PERMISSION_DENIED) addMessage(t.gpsError, false);
         },
         { enableHighAccuracy: false, timeout: 10000 }
       );
@@ -298,9 +209,6 @@ export default function Home() {
     }
   };
 
-  // ============================================
-  // Cancel Navigation
-  // ============================================
   const handleCancelNavigation = () => {
     setNavigatingTo(null);
     setRouteInfo(null);
@@ -308,9 +216,6 @@ export default function Home() {
     window.dispatchEvent(new CustomEvent('cancel-navigation'));
   };
 
-  // ============================================
-  // Toggle Mute
-  // ============================================
   const toggleMute = () => {
     setIsMuted(prev => {
       if (!prev) window.speechSynthesis?.cancel();
@@ -318,28 +223,19 @@ export default function Home() {
     });
   };
 
-  // ============================================
-  // Scroll to bottom when new message
-  // ============================================
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
-  // ============================================
-  // Service Worker
-  // ============================================
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
   }, []);
 
-  // ============================================
-  // Render
-  // ============================================
   return (
     <div className="flex flex-col h-[100dvh] bg-gray-100 overflow-hidden relative">
-      
+
       {/* Language Selector */}
       <div className="absolute top-4 right-4 z-[1002]">
         <button
@@ -349,49 +245,31 @@ export default function Home() {
           <Globe size={18} className="text-gray-600" />
           <span className="text-sm font-medium">{language.toUpperCase()}</span>
         </button>
-        
         {showLangMenu && (
           <div className="absolute right-0 mt-2 bg-white rounded-xl shadow-lg overflow-hidden">
-            <button
-              onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
-              className={`w-full px-4 py-2 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}
-            >
+            <button onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
+              className={`w-full px-4 py-2 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}>
               🇻🇳 Tiếng Việt
             </button>
-            <button
-              onClick={() => { setLanguage('en'); setShowLangMenu(false); }}
-              className={`w-full px-4 py-2 text-left text-sm ${language === 'en' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}
-            >
+            <button onClick={() => { setLanguage('en'); setShowLangMenu(false); }}
+              className={`w-full px-4 py-2 text-left text-sm ${language === 'en' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}>
               🇬🇧 English
             </button>
           </div>
         )}
       </div>
 
-      {/* Tab Tour - Giữ nguyên giao diện */}
       {activeTab === 'tour' && (
         <>
           {/* City Selector */}
           <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[1001]">
             <div className="bg-white/95 backdrop-blur-md rounded-full p-1 shadow-lg flex gap-1">
-              <button
-                onClick={() => setSelectedCity('ninh-binh')}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                  selectedCity === 'ninh-binh'
-                    ? 'bg-blue-500 text-white'
-                    : 'text-gray-600 hover:bg-gray-100'
-                }`}
-              >
+              <button onClick={() => setSelectedCity('ninh-binh')}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${selectedCity === 'ninh-binh' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
                 🏞️ Ninh Bình
               </button>
-              <button
-                onClick={() => setSelectedCity('hanoi')}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                  selectedCity === 'hanoi'
-                    ? 'bg-blue-500 text-white'
-                    : 'text-gray-600 hover:bg-gray-100'
-                }`}
-              >
+              <button onClick={() => setSelectedCity('hanoi')}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${selectedCity === 'hanoi' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
                 🏛️ Hà Nội
               </button>
             </div>
@@ -410,7 +288,7 @@ export default function Home() {
                       {selectedCity === 'ninh-binh' ? 'Ninh Bình' : 'Hà Nội'} Tour
                     </h1>
                     <span className="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full flex items-center gap-1">
-                      <CheckCircle size={12} /> {selectedCity === 'hanoi' ? 'EN' : 'VI'}
+                      <CheckCircle size={12} /> {language.toUpperCase()}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -426,22 +304,13 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-
               <div className="flex gap-2">
-                <button 
-                  onClick={toggleMute} 
-                  className={`p-3 rounded-full transition-colors ${isMuted ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-600'}`}
-                >
+                <button onClick={toggleMute}
+                  className={`p-3 rounded-full transition-colors ${isMuted ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-600'}`}>
                   {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
                 </button>
-                <button
-                  onClick={handleStartTour}
-                  className={`p-3 rounded-full shadow-lg transition-all ${
-                    isTracking
-                      ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white'
-                      : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'
-                  }`}
-                >
+                <button onClick={handleStartTour}
+                  className={`p-3 rounded-full shadow-lg transition-all ${isTracking ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white' : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'}`}>
                   <Navigation size={22} className={isTracking ? 'animate-pulse' : ''} />
                 </button>
               </div>
@@ -471,7 +340,7 @@ export default function Home() {
 
           {/* Map */}
           <div className="flex-grow z-0">
-            <MapContainer isTracking={isTracking} selectedCity={selectedCity} />
+            <MapContainer isTracking={isTracking} selectedCity={selectedCity} language={language} />
           </div>
 
           {/* Chat Panel */}
@@ -490,8 +359,8 @@ export default function Home() {
               {messages.map((m, i) => (
                 <div key={i} className={`flex ${m.role === 'ai' ? 'justify-start' : 'justify-center'}`}>
                   <div className={`max-w-[90%] p-3 rounded-2xl text-sm ${
-                    m.role === 'ai' 
-                      ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100' 
+                    m.role === 'ai'
+                      ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100'
                       : 'bg-gray-100 text-gray-500 text-xs'
                   }`}>
                     <p className="whitespace-pre-wrap leading-relaxed">{m.content}</p>
@@ -505,34 +374,20 @@ export default function Home() {
         </>
       )}
 
-      {/* Tab Shop */}
       {activeTab === 'shop' && (
         <ShopTab selectedCity={selectedCity} language={language} />
       )}
 
       {/* Bottom Tab Bar */}
-      <div className="bg-white border-t border-gray-200 z-[1002] safe-area-pb">
+      <div className="bg-white border-t border-gray-200 z-[1002]">
         <div className="flex justify-around items-center py-2 px-4 max-w-md mx-auto">
-          <button
-            onClick={() => setActiveTab('tour')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
-              activeTab === 'tour'
-                ? 'bg-blue-50 text-blue-600'
-                : 'text-gray-400 hover:text-gray-600'
-            }`}
-          >
+          <button onClick={() => setActiveTab('tour')}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
             <Map size={24} />
             <span className="text-xs mt-1 font-medium">{t.tour}</span>
           </button>
-          
-          <button
-            onClick={() => setActiveTab('shop')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
-              activeTab === 'shop'
-                ? 'bg-blue-50 text-blue-600'
-                : 'text-gray-400 hover:text-gray-600'
-            }`}
-          >
+          <button onClick={() => setActiveTab('shop')}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
             <ShoppingBag size={24} />
             <span className="text-xs mt-1 font-medium">{t.shop}</span>
           </button>
