@@ -197,16 +197,26 @@ export default function Home() {
       fetchAI(e.detail.prompt);
     };
 
+    // ✅ Dừng TTS tự động khi VoiceChat bắt đầu nói
+    const handleVoiceChatSpeaking = () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+
     window.addEventListener('navigate-to', handleNavigateTo as EventListener);
     window.addEventListener('route-found', handleRouteFound as EventListener);
     window.addEventListener('navigation-cancelled', handleCancelNav);
     window.addEventListener('location-arrived', handleLocationArrived as EventListener);
+    window.addEventListener('voice-chat-speaking', handleVoiceChatSpeaking);
 
     return () => {
       window.removeEventListener('navigate-to', handleNavigateTo as EventListener);
       window.removeEventListener('route-found', handleRouteFound as EventListener);
       window.removeEventListener('navigation-cancelled', handleCancelNav);
       window.removeEventListener('location-arrived', handleLocationArrived as EventListener);
+      window.removeEventListener('voice-chat-speaking', handleVoiceChatSpeaking);
     };
   }, [addMessage, fetchAI]);
 
