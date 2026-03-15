@@ -1,13 +1,36 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 
+// ============================================
+// GET - Test API hoạt động
+// ============================================
+export async function GET() {
+  const hasKey = !!process.env.GEMINI_API_KEY;
+  
+  return NextResponse.json({ 
+    status: 'API is running',
+    hasGeminiKey: hasKey,
+    message: hasKey ? '✅ API Key configured' : '❌ Missing GEMINI_API_KEY',
+    timestamp: new Date().toISOString()
+  });
+}
+
+// ============================================
+// POST - Gọi AI
+// ============================================
 export async function POST(req: Request) {
   try {
     const { contextPrompt, language = 'vi' } = await req.json();
     const apiKey = process.env.GEMINI_API_KEY;
 
+    console.log('=== API Chat Called ===');
+    console.log('Has API Key:', !!apiKey);
+
     if (!apiKey) {
-      return NextResponse.json({ error: "API Key chưa cấu hình" }, { status: 500 });
+      console.error('❌ GEMINI_API_KEY not found');
+      return NextResponse.json({ 
+        error: "API Key chưa cấu hình trên Vercel. Vào Settings → Environment Variables" 
+      }, { status: 500 });
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
@@ -21,12 +44,16 @@ ${contextPrompt}`
 
 ${contextPrompt}`;
 
+    console.log('Calling Gemini AI...');
     const result = await model.generateContent(prompt);
     const text = result.response.text();
+    console.log('✅ AI responded successfully');
 
     return NextResponse.json({ reply: text });
   } catch (error: any) {
-    console.error("API Error:", error);
-    return NextResponse.json({ error: "Lỗi AI" }, { status: 500 });
+    console.error("❌ Error:", error.message);
+    return NextResponse.json({ 
+      error: error.message || "Lỗi AI" 
+    }, { status: 500 });
   }
 }
