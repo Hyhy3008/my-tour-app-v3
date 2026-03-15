@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { Navigation, MapPin, Volume2, VolumeX, CheckCircle, X, Map, ShoppingBag, Globe } from 'lucide-react';
 import ShopTab from '@/components/ShopTab';
+import VoiceChat from '@/components/VoiceChat';
 
 const MapContainer = dynamic(() => import('@/components/MapContainer'), {
   ssr: false,
@@ -396,6 +397,9 @@ export default function Home() {
           <div className="flex-grow z-0">
             <MapContainer isTracking={isTracking} selectedCity={selectedCity} language={language} />
           </div>
+
+          {/* THÊM MỚI: Voice Chat nổi góc phải, phía trên chat panel */}
+          <VoiceChat language={language} isMuted={isMuted} />
 
           {/* Chat Panel */}
           <div className="h-[28vh] bg-white rounded-t-3xl shadow-2xl z-[1000] flex flex-col">
