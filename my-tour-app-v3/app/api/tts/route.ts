@@ -1,79 +1,98 @@
 // app/api/tts/route.ts
-// Edge TTS - Microsoft, miễn phí, không cần API key
-// Voice list: https://speech.microsoft.com/portal/voicegallery
-
 import { NextRequest, NextResponse } from "next/server";
 
-// Giọng đọc theo ngôn ngữ
 const VOICES: Record<string, string> = {
-  vi: "vi-VN-HoaiMyNeural",   // Nữ, tự nhiên nhất
-  en: "en-US-JennyNeural",    // Nữ, tự nhiên nhất
+  vi: "vi-VN-HoaiMyNeural",
+  en: "en-US-JennyNeural",
 };
 
-// Lấy token từ Edge TTS
-async function getEdgeToken(): Promise<string> {
-  const res = await fetch(
-    "https://www.bing.com/tfspokenapi/tts/client/token",
-    {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      },
-    }
-  );
-  const data = await res.json();
-  return data.token;
+function randomHex(length: number): string {
+  return Array.from({ length }, () =>
+    Math.floor(Math.random() * 16).toString(16)
+  ).join("");
 }
 
 export async function POST(req: NextRequest) {
   try {
     const { text, language = "vi" } = await req.json();
-
-    if (!text) {
-      return NextResponse.json({ error: "No text" }, { status: 400 });
-    }
+    if (!text) return NextResponse.json({ error: "No text" }, { status: 400 });
 
     const voice = VOICES[language] || VOICES.vi;
-    const token = await getEdgeToken();
+    const lang = language === "vi" ? "vi-VN" : "en-US";
+    const safeText = text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
 
-    // Build SSML
-    const ssml = `
-<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${language === "vi" ? "vi-VN" : "en-US"}">
-  <voice name="${voice}">
-    <prosody rate="0%" pitch="0%">
-      ${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}
-    </prosody>
-  </voice>
-</speak>`.trim();
+    const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${lang}'><voice name='${voice}'><prosody rate='0%' pitch='0%'>${safeText}</prosody></voice></speak>`;
 
-    // Gọi Edge TTS
-    const ttsRes = await fetch(
-      `https://eastus.tts.speech.microsoft.com/cognitiveservices/v1`,
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/ssml+xml",
-          "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
-          "User-Agent": "Mozilla/5.0",
-        },
-        body: ssml,
+    // ── Thử 1: trafficmanager (không cần token) ──
+    try {
+      const r1 = await fetch(
+        "https://tts.trafficmanager.net/cognitiveservices/v1?TrafficType=AzureDemo",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/ssml+xml",
+            "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
+            "User-Agent": "Mozilla/5.0",
+            "Origin": "https://azure.microsoft.com",
+            "Referer": "https://azure.microsoft.com/",
+            "X-RequestId": randomHex(32).toUpperCase(),
+          },
+          body: ssml,
+        }
+      );
+      if (r1.ok) {
+        const buf = await r1.arrayBuffer();
+        if (buf.byteLength > 0) {
+          return new NextResponse(buf, {
+            headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-cache" },
+          });
+        }
       }
-    );
+    } catch { /* thử tiếp */ }
 
-    if (!ttsRes.ok) {
-      throw new Error(`Edge TTS error: ${ttsRes.status}`);
-    }
+    // ── Thử 2: Google Translate TTS (miễn phí, không cần key) ──
+    try {
+      const gl = language === "vi" ? "vi" : "en";
+      const encoded = encodeURIComponent(text.slice(0, 200));
+      const r2 = await fetch(
+        `https://translate.google.com/translate_tts?ie=UTF-8&q=${encoded}&tl=${gl}&client=tw-ob`,
+        {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://translate.google.com/",
+          },
+        }
+      );
+      if (r2.ok) {
+        const buf = await r2.arrayBuffer();
+        if (buf.byteLength > 0) {
+          return new NextResponse(buf, {
+            headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-cache" },
+          });
+        }
+      }
+    } catch { /* thử tiếp */ }
 
-    const audioBuffer = await ttsRes.arrayBuffer();
+    // ── Thử 3: VoiceRSS miễn phí (giới hạn 350 req/ngày) ──
+    try {
+      const vLang = language === "vi" ? "vi-vn" : "en-us";
+      const r3 = await fetch(
+        `https://api.voicerss.org/?key=demo&hl=${vLang}&src=${encodeURIComponent(text.slice(0, 100))}&f=48khz_16bit_mono&c=MP3`
+      );
+      if (r3.ok) {
+        const buf = await r3.arrayBuffer();
+        if (buf.byteLength > 0) {
+          return new NextResponse(buf, {
+            headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-cache" },
+          });
+        }
+      }
+    } catch { /* hết options */ }
 
-    return new NextResponse(audioBuffer, {
-      status: 200,
-      headers: {
-        "Content-Type": "audio/mpeg",
-        "Cache-Control": "no-cache",
-      },
-    });
+    return NextResponse.json({ error: "All TTS providers failed" }, { status: 500 });
 
   } catch (error: any) {
     console.error("TTS Error:", error);
