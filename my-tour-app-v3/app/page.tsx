@@ -31,19 +31,16 @@ export default function Home() {
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Service Worker
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js');
     }
   }, []);
 
-  // Auto scroll chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Lắng nghe events từ Map
   useEffect(() => {
     const handleNavigateTo = (e: CustomEvent) => {
       const destination = e.detail;
@@ -86,8 +83,7 @@ export default function Home() {
           const { latitude, longitude } = position.coords;
           setIsTracking(true);
           setLocation({ lat: latitude, lng: longitude });
-          handleNewMessage(`✅ Đã xác định vị trí!\n📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`, false);
-          handleNewMessage('🚀 Bắt đầu tour! Bấm vào địa điểm để chỉ đường.', false);
+          handleNewMessage(`✅ GPS OK! Bấm vào địa điểm để chỉ đường.`, false);
         },
         (error) => {
           handleNewMessage(`❌ Lỗi GPS: ${error.message}`, false);
@@ -98,7 +94,7 @@ export default function Home() {
       setIsTracking(false);
       setNavigatingTo(null);
       setRouteInfo(null);
-      handleNewMessage('⏹️ Đã dừng tour.', false);
+      handleNewMessage('⏹️ Đã dừng.', false);
     }
   };
 
@@ -134,14 +130,14 @@ export default function Home() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="font-bold text-gray-800">Ninh Bình Tour</h1>
-                <span className="flex items-center gap-1 text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full">
+                <span className="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full flex items-center gap-1">
                   <CheckCircle size={12} /> DEV
                 </span>
               </div>
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${isTracking ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
                 <p className={`text-xs ${isTracking ? 'text-green-600' : 'text-gray-400'}`}>
-                  {isTracking ? 'Đang dẫn đường' : 'Chờ kích hoạt'}
+                  {isTracking ? 'Đang theo dõi' : 'Chờ kích hoạt'}
                 </p>
                 {visitedCount > 0 && (
                   <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
@@ -170,20 +166,20 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Route Info Banner */}
+      {/* Route Banner */}
       {navigatingTo && routeInfo && (
         <div className="absolute top-20 left-0 right-0 z-[999] p-3">
           <div className="bg-blue-500/95 backdrop-blur text-white rounded-2xl p-3 max-w-sm mx-auto shadow-lg">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs opacity-90">Đang dẫn đường đến</p>
+                <p className="text-xs opacity-80">Đang dẫn đường</p>
                 <p className="font-bold">{navigatingTo}</p>
-                <div className="flex items-center gap-3 mt-1">
-                  <span className="text-sm">📏 {routeInfo.distance}km</span>
-                  <span className="text-sm">⏱️ {routeInfo.time} phút</span>
+                <div className="flex gap-3 mt-1 text-sm">
+                  <span>📏 {routeInfo.distance}km</span>
+                  <span>⏱️ {routeInfo.time} phút</span>
                 </div>
               </div>
-              <button onClick={handleCancelNavigation} className="p-2 bg-white/20 rounded-lg hover:bg-white/30">
+              <button onClick={handleCancelNavigation} className="p-2 bg-white/20 rounded-lg">
                 <X size={20} />
               </button>
             </div>
@@ -203,15 +199,15 @@ export default function Home() {
         </div>
         <div className="flex-grow overflow-y-auto px-4 pb-4 space-y-3">
           {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full text-center">
-              <Navigation className="text-blue-500 mb-3" size={32} />
+            <div className="flex flex-col items-center justify-center h-full">
+              <Navigation className="text-blue-500 mb-2" size={32} />
               <p className="text-gray-500 text-sm">Bấm Navigation để bắt đầu!</p>
             </div>
           )}
           {messages.map((m, i) => (
             <div key={i} className={`flex ${m.role === 'ai' ? 'justify-start' : 'justify-center'}`}>
               <div className={`max-w-[90%] p-3 rounded-2xl text-sm ${
-                m.role === 'ai' ? 'bg-blue-50 text-gray-800 border border-blue-100' : 'bg-gray-100 text-gray-500 text-xs'
+                m.role === 'ai' ? 'bg-blue-50 border border-blue-100' : 'bg-gray-100 text-gray-500 text-xs'
               }`}>
                 <p className="whitespace-pre-wrap">{m.content}</p>
                 {m.role === 'ai' && <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>}
