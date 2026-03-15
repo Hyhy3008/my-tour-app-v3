@@ -3,32 +3,58 @@
 import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 
+// Icons - GIỮ NGUYÊN
 const userIcon = L.icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-  iconSize: [25, 41], 
+  iconSize: [25, 41],
   iconAnchor: [12, 41],
 });
 
 const locationIcon = L.icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-  iconSize: [25, 41], 
+  iconSize: [25, 41],
   iconAnchor: [12, 41],
 });
 
-const locations = [
-  { id: "trang-an", name: "Tràng An", lat: 20.2541, lng: 105.9149, radius: 100, prompt: "Khách vừa đến Tràng An - Di sản UNESCO. Giới thiệu về đi thuyền xuyên hang." },
-  { id: "hang-mua", name: "Hang Múa", lat: 20.2316, lng: 105.9189, radius: 50, prompt: "Khách đến Hang Múa. Kể về 486 bậc đá." },
-  { id: "bai-dinh", name: "Chùa Bái Đính", lat: 20.2686, lng: 105.8481, radius: 150, prompt: "Khách đến chùa Bái Đính lớn nhất Đông Nam Á." },
-  { id: "tam-coc", name: "Tam Cốc", lat: 20.2153, lng: 105.9218, radius: 80, prompt: "Khách đến Tam Cốc. Giới thiệu ba hang." },
-  { id: "hoa-lu", name: "Cố đô Hoa Lư", lat: 20.2589, lng: 105.9256, radius: 40, prompt: "Khách đến Cố đô Hoa Lư, kinh đô cổ." },
-  { id: "thien-ha", name: "Động Thiên Hà", lat: 20.2083, lng: 105.8944, radius: 30, prompt: "Khách đến Động Thiên Hà lung linh." },
-  { id: "sen", name: "Cánh đồng Sen", lat: 20.2200, lng: 105.9100, radius: 120, prompt: "Khách ở cánh đồng sen đẹp." },
-];
+// ============================================
+// THÊM: Locations theo city
+// ============================================
+const locationsData = {
+  'ninh-binh': [
+    { id: "trang-an", name: "Tràng An", lat: 20.2541, lng: 105.9149, radius: 100, prompt: "Khách vừa đến Tràng An - Di sản UNESCO. Giới thiệu ngắn gọn về trải nghiệm đi thuyền xuyên hang động." },
+    { id: "hang-mua", name: "Hang Múa", lat: 20.2316, lng: 105.9189, radius: 50, prompt: "Khách đến Hang Múa. Kể về 486 bậc đá và view tuyệt đẹp trên đỉnh." },
+    { id: "bai-dinh", name: "Chùa Bái Đính", lat: 20.2686, lng: 105.8481, radius: 150, prompt: "Khách đến chùa Bái Đính - chùa lớn nhất Đông Nam Á. Giới thiệu các kỷ lục." },
+    { id: "tam-coc", name: "Tam Cốc", lat: 20.2153, lng: 105.9218, radius: 80, prompt: "Khách đến Tam Cốc. Giới thiệu về ba hang và mùa lúa chín." },
+    { id: "hoa-lu", name: "Cố đô Hoa Lư", lat: 20.2589, lng: 105.9256, radius: 40, prompt: "Khách đến Cố đô Hoa Lư. Kể về vua Đinh và lịch sử kinh đô." },
+    { id: "thien-ha", name: "Động Thiên Hà", lat: 20.2083, lng: 105.8944, radius: 30, prompt: "Khách đến Động Thiên Hà. Mô tả vẻ đẹp thạch nhũ lung linh." },
+    { id: "sen", name: "Cánh đồng Sen", lat: 20.2200, lng: 105.9100, radius: 120, prompt: "Khách ở cánh đồng sen. Gợi ý thời điểm và góc chụp ảnh đẹp." },
+  ],
+  'hanoi': [
+    { id: "hoan-kiem", name: "Hồ Hoàn Kiếm", lat: 21.0285, lng: 105.8542, radius: 150, prompt: "Khách đến Hồ Hoàn Kiếm - trái tim Hà Nội. Kể về Tháp Rùa, đền Ngọc Sơn và truyền thuyết vua Lê trả gươm." },
+    { id: "old-quarter", name: "Phố Cổ Hà Nội", lat: 21.0340, lng: 105.8500, radius: 200, prompt: "Khách đang ở Phố Cổ Hà Nội. Giới thiệu 36 phố phường, mỗi phố một nghề truyền thống." },
+    { id: "temple-lit", name: "Văn Miếu Quốc Tử Giám", lat: 21.0294, lng: 105.8354, radius: 100, prompt: "Khách đến Văn Miếu - trường đại học đầu tiên của Việt Nam từ năm 1070. Giới thiệu 5 sân và 82 bia tiến sĩ." },
+    { id: "ho-chi-minh", name: "Lăng Chủ tịch Hồ Chí Minh", lat: 21.0369, lng: 105.8350, radius: 150, prompt: "Khách đến Lăng Bác. Giới thiệu về Chủ tịch Hồ Chí Minh và quần thể di tích." },
+    { id: "one-pillar", name: "Chùa Một Cột", lat: 21.0359, lng: 105.8337, radius: 30, prompt: "Khách đến Chùa Một Cột. Giải thích kiến trúc hình hoa sen độc đáo." },
+    { id: "citadel", name: "Hoàng Thành Thăng Long", lat: 21.0340, lng: 105.8400, radius: 200, prompt: "Khách đến Hoàng Thành Thăng Long - Di sản UNESCO. Giới thiệu 1000 năm lịch sử." },
+    { id: "hoa-lo", name: "Nhà tù Hỏa Lò", lat: 21.0257, lng: 105.8468, radius: 50, prompt: "Khách đến Nhà tù Hỏa Lò. Kể về lịch sử từ thời Pháp thuộc đến chiến tranh Việt Nam." },
+    { id: "dong-xuan", name: "Chợ Đồng Xuân", lat: 21.0383, lng: 105.8498, radius: 80, prompt: "Khách đến Chợ Đồng Xuân - chợ lớn nhất Hà Nội. Gợi ý mua sắm và đặc sản." },
+    { id: "west-lake", name: "Hồ Tây", lat: 21.0545, lng: 105.8234, radius: 300, prompt: "Khách đến Hồ Tây - hồ lớn nhất Hà Nội. Giới thiệu chùa Trấn Quốc và điểm ngắm hoàng hôn." },
+    { id: "train-street", name: "Phố Tàu", lat: 21.0291, lng: 105.8515, radius: 40, prompt: "Khách đến Phố Tàu nổi tiếng. Giải thích trải nghiệm độc đáo và giờ tàu chạy." },
+    { id: "st-joseph", name: "Nhà thờ Lớn Hà Nội", lat: 21.0288, lng: 105.8490, radius: 50, prompt: "Khách đến Nhà thờ Lớn - kiến trúc Gothic từ 1886. Giới thiệu khu vực Nhà Thờ với nhiều quán cafe." },
+    { id: "opera", name: "Nhà hát Lớn Hà Nội", lat: 21.0245, lng: 105.8573, radius: 60, prompt: "Khách đến Nhà hát Lớn - kiệt tác kiến trúc Pháp từ 1911. Mô tả vẻ đẹp và ý nghĩa văn hóa." },
+  ]
+};
 
+const cityCenter = {
+  'ninh-binh': { lat: 20.2506, lng: 105.9745, zoom: 13 },
+  'hanoi': { lat: 21.0285, lng: 105.8542, zoom: 14 }
+};
+
+// GIỮ NGUYÊN: Hàm tính khoảng cách
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371e3;
   const φ1 = (lat1 * Math.PI) / 180;
@@ -39,18 +65,44 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Component nội bộ để update marker mà không re-render toàn bộ map
-function GPSTracker({ isTracking }: { isTracking: boolean }) {
+// ============================================
+// THÊM: Component xử lý chuyển city
+// ============================================
+function CityChangeHandler({ selectedCity }: { selectedCity: 'ninh-binh' | 'hanoi' }) {
+  const map = useMap();
+  const prevCityRef = useRef(selectedCity);
+
+  useEffect(() => {
+    if (prevCityRef.current !== selectedCity) {
+      const center = cityCenter[selectedCity];
+      map.flyTo([center.lat, center.lng], center.zoom, { duration: 1.5 });
+      prevCityRef.current = selectedCity;
+    }
+  }, [selectedCity, map]);
+
+  return null;
+}
+
+// ============================================
+// GIỮ NGUYÊN: GPSTracker (chỉ thêm prop selectedCity)
+// ============================================
+function GPSTracker({ isTracking, selectedCity }: { isTracking: boolean; selectedCity: 'ninh-binh' | 'hanoi' }) {
   const map = useMap();
   const markerRef = useRef<L.Marker | null>(null);
+  const accuracyCircleRef = useRef<L.Circle | null>(null);
   const watchIdRef = useRef<number | null>(null);
-  const lastPositionRef = useRef<{ lat: number; lng: number } | null>(null);
+  const lastPanRef = useRef<{ lat: number; lng: number } | null>(null);
   const visitedRef = useRef<Set<string>>(new Set());
+  const isFirstPositionRef = useRef(true);
+
+  // Reset visited khi đổi city
+  useEffect(() => {
+    visitedRef.current.clear();
+  }, [selectedCity]);
 
   useEffect(() => {
     if (!isTracking) {
-      // Cleanup
-      if (watchIdRef.current) {
+      if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
         watchIdRef.current = null;
       }
@@ -58,60 +110,74 @@ function GPSTracker({ isTracking }: { isTracking: boolean }) {
         markerRef.current.remove();
         markerRef.current = null;
       }
+      if (accuracyCircleRef.current) {
+        accuracyCircleRef.current.remove();
+        accuracyCircleRef.current = null;
+      }
+      isFirstPositionRef.current = true;
       return;
     }
 
-    // Tạo marker 1 lần
     if (!markerRef.current) {
-      markerRef.current = L.marker([0, 0], { icon: userIcon }).addTo(map);
-      markerRef.current.bindPopup('🧭 Vị trí của bạn');
+      markerRef.current = L.marker([0, 0], { icon: userIcon })
+        .addTo(map)
+        .bindPopup('🧭 Vị trí của bạn');
     }
 
-    const handlePosition = (position: GeolocationPosition) => {
-      const { latitude, longitude } = position.coords;
-      
-      // Cập nhật marker trực tiếp (không qua React state)
-      markerRef.current?.setLatLng([latitude, longitude]);
+    if (!accuracyCircleRef.current) {
+      accuracyCircleRef.current = L.circle([0, 0], {
+        radius: 0,
+        color: '#3b82f6',
+        fillColor: '#3b82f6',
+        fillOpacity: 0.15,
+        weight: 1,
+      }).addTo(map);
+    }
 
-      // Chỉ pan map nếu di chuyển > 30m
-      if (lastPositionRef.current) {
+    const locations = locationsData[selectedCity];
+
+    const handlePosition = (position: GeolocationPosition) => {
+      const { latitude, longitude, accuracy } = position.coords;
+
+      markerRef.current?.setLatLng([latitude, longitude]);
+      accuracyCircleRef.current?.setLatLng([latitude, longitude]);
+      accuracyCircleRef.current?.setRadius(Math.min(accuracy, 100));
+
+      if (isFirstPositionRef.current) {
+        map.setView([latitude, longitude], 16);
+        lastPanRef.current = { lat: latitude, lng: longitude };
+        isFirstPositionRef.current = false;
+      } else if (lastPanRef.current) {
         const dist = calculateDistance(
-          lastPositionRef.current.lat,
-          lastPositionRef.current.lng,
+          lastPanRef.current.lat,
+          lastPanRef.current.lng,
           latitude,
           longitude
         );
-        if (dist > 30) {
+        if (dist > 50) {
           map.panTo([latitude, longitude]);
-          lastPositionRef.current = { lat: latitude, lng: longitude };
+          lastPanRef.current = { lat: latitude, lng: longitude };
         }
-      } else {
-        map.setView([latitude, longitude], 15);
-        lastPositionRef.current = { lat: latitude, lng: longitude };
       }
 
-      // Check proximity
       for (const loc of locations) {
         const dist = calculateDistance(latitude, longitude, loc.lat, loc.lng);
         if (dist < loc.radius && !visitedRef.current.has(loc.id)) {
           visitedRef.current.add(loc.id);
-          // Dispatch event thay vì gọi callback
-          window.dispatchEvent(new CustomEvent('location-arrived', { 
-            detail: { name: loc.name, prompt: loc.prompt } 
+          window.dispatchEvent(new CustomEvent('location-arrived', {
+            detail: { name: loc.name, prompt: loc.prompt }
           }));
           break;
         }
       }
     };
 
-    // Lấy vị trí ban đầu
     navigator.geolocation.getCurrentPosition(
       handlePosition,
       () => {},
-      { enableHighAccuracy: false, timeout: 5000, maximumAge: 30000 }
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
     );
 
-    // Watch position
     watchIdRef.current = navigator.geolocation.watchPosition(
       handlePosition,
       () => {},
@@ -119,119 +185,167 @@ function GPSTracker({ isTracking }: { isTracking: boolean }) {
     );
 
     return () => {
-      if (watchIdRef.current) {
+      if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
     };
-  }, [isTracking, map]);
+  }, [isTracking, map, selectedCity]);
+
+  useEffect(() => {
+    const handleStop = () => {
+      visitedRef.current.clear();
+    };
+    window.addEventListener('stop-tracking', handleStop);
+    return () => window.removeEventListener('stop-tracking', handleStop);
+  }, []);
 
   return null;
 }
 
-// Component routing
-function RoutingControl() {
+// ============================================
+// GIỮ NGUYÊN: RoutingControl (chỉ thêm prop selectedCity, language)
+// ============================================
+function RoutingControl({ isTracking, selectedCity, language }: { isTracking: boolean; selectedCity: 'ninh-binh' | 'hanoi'; language: string }) {
   const map = useMap();
   const polylineRef = useRef<L.Polyline | null>(null);
+  const shadowPolylineRef = useRef<L.Polyline | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const fetchingRef = useRef(false);
+
+  const locations = locationsData[selectedCity];
+
+  const clearRoute = useCallback(() => {
+    polylineRef.current?.remove();
+    polylineRef.current = null;
+    shadowPolylineRef.current?.remove();
+    shadowPolylineRef.current = null;
+  }, []);
+
+  // Reset khi đổi city
+  useEffect(() => {
+    setSelectedId(null);
+    clearRoute();
+  }, [selectedCity, clearRoute]);
 
   useEffect(() => {
     const handleCancel = () => {
       setSelectedId(null);
-      polylineRef.current?.remove();
-      polylineRef.current = null;
-      window.dispatchEvent(new CustomEvent('navigation-cancelled'));
-    };
-
-    const handleStop = () => {
-      handleCancel();
+      clearRoute();
     };
 
     window.addEventListener('cancel-navigation', handleCancel);
-    window.addEventListener('stop-tracking', handleStop);
+    window.addEventListener('stop-tracking', handleCancel);
 
     return () => {
       window.removeEventListener('cancel-navigation', handleCancel);
-      window.removeEventListener('stop-tracking', handleStop);
+      window.removeEventListener('stop-tracking', handleCancel);
     };
-  }, []);
+  }, [clearRoute]);
 
-  const handleSelectDestination = async (loc: any) => {
+  const handleSelectDestination = async (loc: typeof locations[0]) => {
     if (selectedId === loc.id) {
-      // Cancel
       setSelectedId(null);
-      polylineRef.current?.remove();
-      polylineRef.current = null;
+      clearRoute();
       window.dispatchEvent(new CustomEvent('navigation-cancelled'));
       return;
     }
 
+    if (!isTracking) {
+      alert(language === 'vi' ? 'Vui lòng bấm Start Tour trước!' : 'Please start the tour first!');
+      return;
+    }
+
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
+
     setSelectedId(loc.id);
     window.dispatchEvent(new CustomEvent('navigate-to', { detail: loc }));
 
-    // Lấy vị trí hiện tại và vẽ route
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          const url = `https://router.project-osrm.org/route/v1/driving/${pos.coords.longitude},${pos.coords.latitude};${loc.lng},${loc.lat}?overview=full&geometries=geojson`;
-          const res = await fetch(url);
-          const data = await res.json();
-          
-          if (data.routes?.[0]) {
-            const route = data.routes[0];
-            const coords = route.geometry.coordinates.map(
-              (c: number[]) => [c[1], c[0]] as L.LatLngTuple
-            );
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: false,
+          timeout: 5000,
+        });
+      });
 
-            // Xóa polyline cũ
-            polylineRef.current?.remove();
-            
-            // Vẽ polyline mới
-            polylineRef.current = L.polyline(coords, {
-              color: '#3b82f6',
-              weight: 5,
-              opacity: 0.8
-            }).addTo(map);
+      const { latitude, longitude } = position.coords;
+      const url = `https://router.project-osrm.org/route/v1/driving/${longitude},${latitude};${loc.lng},${loc.lat}?overview=full&geometries=geojson`;
+      const res = await fetch(url);
+      const data = await res.json();
 
-            window.dispatchEvent(new CustomEvent('route-found', {
-              detail: {
-                distance: (route.distance / 1000).toFixed(1),
-                time: Math.round(route.duration / 60)
-              }
-            }));
+      if (data.routes?.[0]) {
+        const route = data.routes[0];
+        const coords: L.LatLngTuple[] = route.geometry.coordinates.map(
+          (c: number[]) => [c[1], c[0]]
+        );
+
+        clearRoute();
+
+        shadowPolylineRef.current = L.polyline(coords, {
+          color: '#1e40af',
+          weight: 8,
+          opacity: 0.3,
+        }).addTo(map);
+
+        polylineRef.current = L.polyline(coords, {
+          color: '#3b82f6',
+          weight: 5,
+          opacity: 0.9,
+        }).addTo(map);
+
+        map.fitBounds(polylineRef.current.getBounds(), { padding: [50, 50] });
+
+        window.dispatchEvent(new CustomEvent('route-found', {
+          detail: {
+            distance: (route.distance / 1000).toFixed(1),
+            time: Math.round(route.duration / 60)
           }
-        } catch (e) {
-          console.error(e);
-        }
-      },
-      () => {},
-      { enableHighAccuracy: false, timeout: 5000 }
-    );
+        }));
+      }
+    } catch (error) {
+      console.error('Routing error:', error);
+      setSelectedId(null);
+      window.dispatchEvent(new CustomEvent('navigation-cancelled'));
+    } finally {
+      fetchingRef.current = false;
+    }
   };
 
   return (
     <>
       {locations.map((loc) => (
         <div key={loc.id}>
-          <Circle 
-            center={[loc.lat, loc.lng]} 
-            radius={loc.radius} 
-            pathOptions={{ 
+          <Circle
+            center={[loc.lat, loc.lng]}
+            radius={loc.radius}
+            pathOptions={{
               color: selectedId === loc.id ? '#ef4444' : '#3b82f6',
+              fillColor: selectedId === loc.id ? '#ef4444' : '#3b82f6',
               fillOpacity: 0.1,
               weight: 2,
-            }} 
+              dashArray: selectedId === loc.id ? undefined : '5, 5',
+            }}
           />
           <Marker position={[loc.lat, loc.lng]} icon={locationIcon}>
             <Popup>
-              <div className="text-center p-1">
-                <p className="font-bold">📍 {loc.name}</p>
+              <div className="text-center p-1 min-w-[120px]">
+                <p className="font-bold text-gray-800">📍 {loc.name}</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {language === 'vi' ? 'Bán kính' : 'Radius'}: {loc.radius}m
+                </p>
                 <button
                   onClick={() => handleSelectDestination(loc)}
-                  className={`mt-2 px-3 py-1.5 text-white text-xs rounded-lg ${
-                    selectedId === loc.id ? 'bg-red-500' : 'bg-blue-500'
+                  className={`mt-2 px-4 py-2 text-white text-xs rounded-lg font-medium transition-colors ${
+                    selectedId === loc.id
+                      ? 'bg-red-500 hover:bg-red-600'
+                      : 'bg-blue-500 hover:bg-blue-600'
                   }`}
                 >
-                  {selectedId === loc.id ? '❌ Hủy' : '🗺️ Chỉ đường'}
+                  {selectedId === loc.id 
+                    ? (language === 'vi' ? '❌ Hủy' : '❌ Cancel')
+                    : (language === 'vi' ? '🗺️ Chỉ đường' : '🗺️ Navigate')
+                  }
                 </button>
               </div>
             </Popup>
@@ -242,25 +356,34 @@ function RoutingControl() {
   );
 }
 
+// ============================================
+// THÊM: Props mới cho MapComponent
+// ============================================
 interface MapProps {
   isTracking: boolean;
+  selectedCity: 'ninh-binh' | 'hanoi';
+  language: string;
 }
 
-export default function MapComponent({ isTracking }: MapProps) {
+export default function MapComponent({ isTracking, selectedCity, language }: MapProps) {
+  const center = cityCenter[selectedCity];
+  
   return (
-    <MapContainer 
-      center={[20.2506, 105.9745]} 
-      zoom={13} 
-      style={{ height: '100%', width: '100%' }} 
+    <MapContainer
+      center={[center.lat, center.lng]}
+      zoom={center.zoom}
+      style={{ height: '100%', width: '100%' }}
       zoomControl={false}
     >
-      <TileLayer 
+      <TileLayer
         url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+        attribution='&copy; OpenStreetMap &copy; CARTO'
         maxZoom={19}
       />
-      
-      <RoutingControl />
-      <GPSTracker isTracking={isTracking} />
+
+      <CityChangeHandler selectedCity={selectedCity} />
+      <RoutingControl isTracking={isTracking} selectedCity={selectedCity} language={language} />
+      <GPSTracker isTracking={isTracking} selectedCity={selectedCity} />
     </MapContainer>
   );
 }
