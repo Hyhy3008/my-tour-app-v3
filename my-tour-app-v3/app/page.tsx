@@ -23,15 +23,13 @@ interface Message {
 export default function Home() {
   const [isTracking, setIsTracking] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [isPaid] = useState(true); // ⭐ DEV MODE - Tắt thanh toán
+  const [isPaid] = useState(true);
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [visitedCount, setVisitedCount] = useState(0);
-  const chatEndRef = useRef<HTMLDivElement>(null);
-
-  // Routing states
   const [routeInfo, setRouteInfo] = useState<{distance: string, time: number} | null>(null);
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Service Worker
   useEffect(() => {
@@ -45,27 +43,32 @@ export default function Home() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Lắng nghe events từ Map (Routing)
+  // Lắng nghe events từ Map
   useEffect(() => {
-    const handleNavigateTo = (e: any) => {
+    const handleNavigateTo = (e: CustomEvent) => {
       const destination = e.detail;
       setNavigatingTo(destination.name);
       setRouteInfo(null);
-      // Chỉ thông báo 1 lần trong chat
       handleNewMessage(`🗺️ Bắt đầu chỉ đường đến ${destination.name}`, false);
     };
 
-    const handleRouteFound = (e: any) => {
-      // Chỉ cập nhật banner, KHÔNG spam chat
+    const handleRouteFound = (e: CustomEvent) => {
       setRouteInfo(e.detail);
     };
 
-    window.addEventListener('navigate-to', handleNavigateTo);
-    window.addEventListener('route-found', handleRouteFound);
+    const handleCancelNav = () => {
+      setNavigatingTo(null);
+      setRouteInfo(null);
+    };
+
+    window.addEventListener('navigate-to', handleNavigateTo as EventListener);
+    window.addEventListener('route-found', handleRouteFound as EventListener);
+    window.addEventListener('navigation-cancelled', handleCancelNav);
 
     return () => {
-      window.removeEventListener('navigate-to', handleNavigateTo);
-      window.removeEventListener('route-found', handleRouteFound);
+      window.removeEventListener('navigate-to', handleNavigateTo as EventListener);
+      window.removeEventListener('route-found', handleRouteFound as EventListener);
+      window.removeEventListener('navigation-cancelled', handleCancelNav);
     };
   }, []);
 
@@ -84,27 +87,12 @@ export default function Home() {
           setIsTracking(true);
           setLocation({ lat: latitude, lng: longitude });
           handleNewMessage(`✅ Đã xác định vị trí!\n📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`, false);
-          handleNewMessage('🚀 Bắt đầu tour! Di chuyển đến các địa điểm để nghe thuyết minh.', false);
+          handleNewMessage('🚀 Bắt đầu tour! Bấm vào địa điểm để chỉ đường.', false);
         },
         (error) => {
-          let errorMsg = '❌ Lỗi GPS: ';
-          switch (error.code) {
-            case error.PERMISSION_DENIED:
-              errorMsg += 'Bạn chưa cấp quyền vị trí.';
-              break;
-            case error.POSITION_UNAVAILABLE:
-              errorMsg += 'Không thể xác định vị trí.';
-              break;
-            case error.TIMEOUT:
-              errorMsg += 'Hết thời gian chờ.';
-              break;
-            default:
-              errorMsg += error.message;
-          }
-          handleNewMessage(errorMsg, false);
-          alert(errorMsg);
+          handleNewMessage(`❌ Lỗi GPS: ${error.message}`, false);
         },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        { enableHighAccuracy: true, timeout: 10000 }
       );
     } else {
       setIsTracking(false);
@@ -118,7 +106,6 @@ export default function Home() {
     setNavigatingTo(null);
     setRouteInfo(null);
     handleNewMessage('❌ Đã hủy chỉ đường', false);
-    // Dispatch event để Map xóa route
     window.dispatchEvent(new CustomEvent('cancel-navigation'));
   };
 
@@ -129,7 +116,6 @@ export default function Home() {
 
   return (
     <div className="flex flex-col h-[100dvh] bg-gray-100 overflow-hidden relative">
-      {/* Background Tracker */}
       <BackgroundTracker
         isTracking={isTracking}
         isMuted={isMuted}
@@ -148,11 +134,9 @@ export default function Home() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="font-bold text-gray-800">Ninh Bình Tour</h1>
-                {isPaid && (
-                  <span className="flex items-center gap-1 text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full">
-                    <CheckCircle size={12} /> DEV
-                  </span>
-                )}
+                <span className="flex items-center gap-1 text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full">
+                  <CheckCircle size={12} /> DEV
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${isTracking ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
@@ -169,15 +153,12 @@ export default function Home() {
           </div>
 
           <div className="flex gap-2">
-            <button 
-              onClick={toggleMute} 
-              className={`p-3 rounded-full transition-all ${isMuted ? 'bg-gray-200 text-gray-500' : 'bg-gray-100 text-gray-700'}`}
-            >
+            <button onClick={toggleMute} className={`p-3 rounded-full ${isMuted ? 'bg-gray-200' : 'bg-gray-100'}`}>
               {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
             </button>
             <button
               onClick={handleStartTour}
-              className={`p-3 rounded-full shadow-lg transition-all ${
+              className={`p-3 rounded-full shadow-lg ${
                 isTracking
                   ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white'
                   : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'
@@ -202,10 +183,7 @@ export default function Home() {
                   <span className="text-sm">⏱️ {routeInfo.time} phút</span>
                 </div>
               </div>
-              <button
-                onClick={handleCancelNavigation}
-                className="p-2 bg-white/20 rounded-lg hover:bg-white/30 transition"
-              >
+              <button onClick={handleCancelNavigation} className="p-2 bg-white/20 rounded-lg hover:bg-white/30">
                 <X size={20} />
               </button>
             </div>
@@ -228,20 +206,15 @@ export default function Home() {
             <div className="flex flex-col items-center justify-center h-full text-center">
               <Navigation className="text-blue-500 mb-3" size={32} />
               <p className="text-gray-500 text-sm">Bấm Navigation để bắt đầu!</p>
-              <p className="text-xs text-gray-400 mt-2">🔧 DEV MODE - Đã tắt thanh toán</p>
             </div>
           )}
           {messages.map((m, i) => (
             <div key={i} className={`flex ${m.role === 'ai' ? 'justify-start' : 'justify-center'}`}>
               <div className={`max-w-[90%] p-3 rounded-2xl text-sm ${
-                m.role === 'ai' 
-                  ? 'bg-blue-50 text-gray-800 border border-blue-100' 
-                  : 'bg-gray-100 text-gray-500 text-xs'
+                m.role === 'ai' ? 'bg-blue-50 text-gray-800 border border-blue-100' : 'bg-gray-100 text-gray-500 text-xs'
               }`}>
                 <p className="whitespace-pre-wrap">{m.content}</p>
-                {m.role === 'ai' && (
-                  <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>
-                )}
+                {m.role === 'ai' && <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>}
               </div>
             </div>
           ))}
