@@ -57,10 +57,8 @@ export default function Home() {
   const [visitedCount, setVisitedCount] = useState(0);
   const [routeInfo, setRouteInfo] = useState<{ distance: string; time: number } | null>(null);
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
-  // ✅ Track location hiện tại để truyền vào RAG
   const [currentLocationId, setCurrentLocationId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
-
   const isMutedRef = useRef(isMuted);
   const languageRef = useRef(language);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -79,7 +77,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, language: languageRef.current }),
       });
-      if (!res.ok) throw new Error(`TTS API error: ${res.status}`);
+      if (!res.ok) throw new Error(`TTS error: ${res.status}`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
@@ -99,7 +97,7 @@ export default function Home() {
     setVisitedCount(0);
     setRouteInfo(null);
     setNavigatingTo(null);
-    setCurrentLocationId(null); // ✅ reset location khi đổi city
+    setCurrentLocationId(null);
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
   }, [selectedCity]);
 
@@ -108,18 +106,13 @@ export default function Home() {
     setMessages(prev => [...prev, { role: isAi ? 'ai' : 'system', content: msg, time }]);
   }, []);
 
-  // ✅ fetchAI nhận thêm locationId để truyền vào RAG
   const fetchAI = useCallback(async (prompt: string, locationId?: string | null) => {
     const lang = languageRef.current;
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contextPrompt: prompt,
-          locationId: locationId || null,  // ✅ RAG sẽ ưu tiên docs của location này
-          language: lang,
-        }),
+        body: JSON.stringify({ contextPrompt: prompt, locationId: locationId || null, language: lang }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -141,16 +134,13 @@ export default function Home() {
     };
     const handleRouteFound = (e: CustomEvent) => { setRouteInfo(e.detail); };
     const handleCancelNav = () => { setNavigatingTo(null); setRouteInfo(null); };
-
-    // ✅ Nhận locationId từ MapContainer
     const handleLocationArrived = (e: CustomEvent) => {
       const { name, prompt, locationId } = e.detail;
-      setCurrentLocationId(locationId || null); // ✅ cập nhật location hiện tại
+      setCurrentLocationId(locationId || null);
       setVisitedCount(prev => prev + 1);
       addMessage(`${translations[languageRef.current].arrivedAt} ${name}`, false);
-      fetchAI(prompt, locationId); // ✅ truyền locationId vào RAG
+      fetchAI(prompt, locationId);
     };
-
     const handleVoiceChatSpeaking = () => {
       if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
     };
@@ -217,7 +207,7 @@ export default function Home() {
           <span className="text-sm font-medium">{language.toUpperCase()}</span>
         </button>
         {showLangMenu && (
-          <div className="absolute right-0 mt-2 bg-white rounded-xl shadow-lg overflow-hidden">
+          <div className="absolute right-0 mt-2 bg-white rounded-xl shadow-lg overflow-hidden z-10">
             <button onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
               className={`w-full px-4 py-2 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}>
               🇻🇳 Tiếng Việt
@@ -232,65 +222,77 @@ export default function Home() {
 
       {activeTab === 'tour' && (
         <>
-          {/* City Selector */}
-          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[1001]">
-            <div className="bg-white/95 backdrop-blur-md rounded-full p-1 shadow-lg flex gap-1">
-              <button onClick={() => setSelectedCity('ninh-binh')}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${selectedCity === 'ninh-binh' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
-                🏞️ Ninh Bình
-              </button>
-              <button onClick={() => setSelectedCity('hanoi')}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${selectedCity === 'hanoi' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
-                🏛️ Hà Nội
-              </button>
-            </div>
-          </div>
-
-          {/* Header */}
+          {/* ✅ Header gộp City Selector vào trong - không che nút navigation */}
           <div className="absolute top-0 left-0 right-20 z-[1000] p-3">
-            <div className="bg-white/95 backdrop-blur-md shadow-lg rounded-2xl p-3 flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
-                  <MapPin className="text-white" size={20} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h1 className="font-bold text-gray-800">
-                      {selectedCity === 'ninh-binh' ? 'Ninh Bình' : 'Hà Nội'} Tour
-                    </h1>
-                    <span className="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full flex items-center gap-1">
-                      <CheckCircle size={12} /> {language.toUpperCase()}
-                    </span>
+            <div className="bg-white/95 backdrop-blur-md shadow-lg rounded-2xl p-3">
+
+              {/* Row 1: Logo + Status + Buttons */}
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
+                    <MapPin className="text-white" size={18} />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full ${isTracking ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
-                    <p className={`text-xs ${isTracking ? 'text-green-600' : 'text-gray-400'}`}>
-                      {isTracking ? t.tracking : t.waiting}
-                    </p>
-                    {visitedCount > 0 && (
-                      <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
-                        {visitedCount} {t.points}
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <h1 className="font-bold text-gray-800 text-sm">
+                        {selectedCity === 'ninh-binh' ? 'Ninh Bình' : 'Hà Nội'} Tour
+                      </h1>
+                      <span className="text-xs bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                        <CheckCircle size={10} /> {language.toUpperCase()}
                       </span>
-                    )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-1.5 h-1.5 rounded-full ${isTracking ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
+                      <p className={`text-xs ${isTracking ? 'text-green-600' : 'text-gray-400'}`}>
+                        {isTracking ? t.tracking : t.waiting}
+                      </p>
+                      {visitedCount > 0 && (
+                        <span className="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full">
+                          {visitedCount} {t.points}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
+
+                <div className="flex gap-1.5">
+                  <button onClick={toggleMute}
+                    className={`p-2.5 rounded-full transition-colors ${isMuted ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-600'}`}>
+                    {isMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
+                  </button>
+                  <button onClick={handleStartTour}
+                    className={`p-2.5 rounded-full shadow-lg transition-all ${
+                      isTracking
+                        ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white'
+                        : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'
+                    }`}>
+                    <Navigation size={20} className={isTracking ? 'animate-pulse' : ''} />
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <button onClick={toggleMute}
-                  className={`p-3 rounded-full transition-colors ${isMuted ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-600'}`}>
-                  {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+
+              {/* Row 2: City Selector */}
+              <div className="flex gap-1.5 mt-2">
+                <button onClick={() => setSelectedCity('ninh-binh')}
+                  className={`flex-1 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                    selectedCity === 'ninh-binh' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}>
+                  🏞️ Ninh Bình
                 </button>
-                <button onClick={handleStartTour}
-                  className={`p-3 rounded-full shadow-lg transition-all ${isTracking ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white' : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'}`}>
-                  <Navigation size={22} className={isTracking ? 'animate-pulse' : ''} />
+                <button onClick={() => setSelectedCity('hanoi')}
+                  className={`flex-1 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                    selectedCity === 'hanoi' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}>
+                  🏛️ Hà Nội
                 </button>
               </div>
+
             </div>
           </div>
 
           {/* Route Banner */}
           {navigatingTo && routeInfo && (
-            <div className="absolute top-28 left-0 right-0 z-[999] p-3">
+            <div className="absolute top-32 left-0 right-0 z-[999] px-3">
               <div className="bg-blue-500/95 backdrop-blur text-white rounded-2xl p-3 max-w-sm mx-auto shadow-lg">
                 <div className="flex items-center justify-between">
                   <div>
@@ -314,7 +316,7 @@ export default function Home() {
             <MapContainer isTracking={isTracking} selectedCity={selectedCity} language={language} />
           </div>
 
-          {/* ✅ Truyền currentLocationId xuống VoiceChat để RAG biết đang ở đâu */}
+          {/* Voice Chat */}
           <VoiceChat language={language} isMuted={isMuted} locationId={currentLocationId} />
 
           {/* Chat Panel */}
