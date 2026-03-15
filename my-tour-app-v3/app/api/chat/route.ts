@@ -2,7 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 
 // ============================================
-// GET - Test API hoạt động
+// GET - Test API
 // ============================================
 export async function GET() {
   const hasKey = !!process.env.GEMINI_API_KEY;
@@ -10,7 +10,7 @@ export async function GET() {
   return NextResponse.json({ 
     status: 'API is running',
     hasGeminiKey: hasKey,
-    model: 'gemini-2.0-flash-exp', // ✅ Hiển thị model đang dùng
+    model: 'gemini-pro',
     message: hasKey ? '✅ API Key configured' : '❌ Missing GEMINI_API_KEY',
     timestamp: new Date().toISOString()
   });
@@ -25,20 +25,18 @@ export async function POST(req: Request) {
     const apiKey = process.env.GEMINI_API_KEY;
 
     console.log('=== API Chat Called ===');
-    console.log('Has API Key:', !!apiKey);
 
     if (!apiKey) {
-      console.error('❌ GEMINI_API_KEY not found');
       return NextResponse.json({ 
-        error: "API Key chưa cấu hình trên Vercel" 
+        error: "API Key chưa cấu hình" 
       }, { status: 500 });
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
     
-    // ✅ SỬA: Đổi model mới
+    // ✅ FIX: Dùng model "gemini-pro" (ổn định nhất)
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash-exp" 
+      model: "gemini-pro" 
     });
 
     const prompt = language === 'en' 
@@ -49,17 +47,17 @@ ${contextPrompt}`
 
 ${contextPrompt}`;
 
-    console.log('Calling Gemini 2.0...');
+    console.log('Calling Gemini Pro...');
     const result = await model.generateContent(prompt);
     const text = result.response.text();
-    console.log('✅ AI responded successfully');
+    console.log('✅ Success');
 
     return NextResponse.json({ reply: text });
   } catch (error: any) {
     console.error("❌ Error:", error.message);
     return NextResponse.json({ 
-      error: error.message || "Lỗi AI",
-      details: error.toString()
+      error: error.message,
+      stack: error.stack
     }, { status: 500 });
   }
 }
