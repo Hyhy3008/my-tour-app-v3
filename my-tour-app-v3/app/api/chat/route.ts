@@ -7,7 +7,7 @@ export async function GET() {
   return NextResponse.json({ 
     status: 'OK',
     hasGeminiKey: hasKey,
-    model: 'gemini-3.1-flash-lite'
+    model: 'gemini-3.1-flash-lite-preview'
   });
 }
 
@@ -22,7 +22,11 @@ export async function POST(req: Request) {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
+    
+    // ✅ Model name chính xác
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-3.1-flash-lite-preview" 
+    });
 
     const prompt = language === 'en' 
       ? `You are a friendly tour guide in Vietnam. Reply in English, short (3-4 sentences), fun with emojis.\n\n${contextPrompt}`
