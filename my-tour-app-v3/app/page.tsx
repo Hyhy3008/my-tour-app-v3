@@ -23,42 +23,22 @@ interface Message {
 
 const translations = {
   vi: {
-    tour: 'Tour',
-    shop: 'Mua sắm',
-    tracking: 'Đang theo dõi',
-    waiting: 'Chờ kích hoạt',
-    points: 'điểm',
-    navigatingTo: 'Đang dẫn đường đến',
-    km: 'km',
-    min: 'phút',
-    welcome: 'Chào mừng!',
-    tapToStart: 'Bấm Navigation để bắt đầu tour',
+    tour: 'Tour', shop: 'Mua sắm', tracking: 'Đang theo dõi', waiting: 'Chờ kích hoạt',
+    points: 'điểm', navigatingTo: 'Đang dẫn đường đến', km: 'km', min: 'phút',
+    welcome: 'Chào mừng!', tapToStart: 'Bấm Navigation để bắt đầu tour',
     startTour: '🚀 Bắt đầu tour! Di chuyển đến các địa điểm để nghe thuyết minh.',
-    stopTour: '⏹️ Đã dừng tour.',
-    cancelNav: '❌ Đã hủy chỉ đường',
+    stopTour: '⏹️ Đã dừng tour.', cancelNav: '❌ Đã hủy chỉ đường',
     gpsError: '❌ Bạn cần cấp quyền GPS. Vào Cài đặt → Quyền → Vị trí.',
-    loadError: '⚠️ Không thể tải thông tin',
-    arrivedAt: '📍 Đã đến',
-    navigateTo: '🗺️ Chỉ đường đến',
+    loadError: '⚠️ Không thể tải thông tin', arrivedAt: '📍 Đã đến', navigateTo: '🗺️ Chỉ đường đến',
   },
   en: {
-    tour: 'Tour',
-    shop: 'Shop',
-    tracking: 'Tracking',
-    waiting: 'Ready',
-    points: 'spots',
-    navigatingTo: 'Navigating to',
-    km: 'km',
-    min: 'min',
-    welcome: 'Welcome!',
-    tapToStart: 'Tap Navigation to start tour',
+    tour: 'Tour', shop: 'Shop', tracking: 'Tracking', waiting: 'Ready',
+    points: 'spots', navigatingTo: 'Navigating to', km: 'km', min: 'min',
+    welcome: 'Welcome!', tapToStart: 'Tap Navigation to start tour',
     startTour: '🚀 Tour started! Move to locations to hear the guide.',
-    stopTour: '⏹️ Tour stopped.',
-    cancelNav: '❌ Navigation cancelled',
+    stopTour: '⏹️ Tour stopped.', cancelNav: '❌ Navigation cancelled',
     gpsError: '❌ Please enable GPS in Settings → Permissions → Location.',
-    loadError: '⚠️ Cannot load information',
-    arrivedAt: '📍 Arrived at',
-    navigateTo: '🗺️ Navigate to',
+    loadError: '⚠️ Cannot load information', arrivedAt: '📍 Arrived at', navigateTo: '🗺️ Navigate to',
   },
 };
 
@@ -77,12 +57,12 @@ export default function Home() {
   const [visitedCount, setVisitedCount] = useState(0);
   const [routeInfo, setRouteInfo] = useState<{ distance: string; time: number } | null>(null);
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
+  // ✅ Track location hiện tại để truyền vào RAG
+  const [currentLocationId, setCurrentLocationId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Refs để tránh stale closure
   const isMutedRef = useRef(isMuted);
   const languageRef = useRef(language);
-  // Ref giữ audio đang phát
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
@@ -90,52 +70,26 @@ export default function Home() {
 
   const t = translations[language];
 
-  // ============================================
-  // Edge TTS: gọi /api/tts → nhận MP3 → play
-  // Không dùng browser speechSynthesis nữa
-  // Hoạt động tốt trên iOS, Android, Desktop
-  // ============================================
   const speakText = useCallback(async (text: string) => {
     if (isMutedRef.current) return;
-
     try {
-      // Dừng audio đang phát nếu có
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-
+      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, language: languageRef.current }),
       });
-
       if (!res.ok) throw new Error(`TTS API error: ${res.status}`);
-
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audioRef.current = audio;
-
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
-        audioRef.current = null;
-      };
-
-      audio.onerror = (e) => {
-        console.error('Audio play error:', e);
-        URL.revokeObjectURL(url);
-        audioRef.current = null;
-      };
-
+      audio.onended = () => { URL.revokeObjectURL(url); audioRef.current = null; };
+      audio.onerror = () => { URL.revokeObjectURL(url); audioRef.current = null; };
       await audio.play();
-    } catch (e) {
-      console.error('speakText error:', e);
-    }
-  }, []); // dependency rỗng vì chỉ dùng refs
+    } catch (e) { console.error('speakText error:', e); }
+  }, []);
 
-  // Reset khi đổi city
   useEffect(() => {
     if (isTracking) {
       setIsTracking(false);
@@ -145,10 +99,8 @@ export default function Home() {
     setVisitedCount(0);
     setRouteInfo(null);
     setNavigatingTo(null);
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
+    setCurrentLocationId(null); // ✅ reset location khi đổi city
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
   }, [selectedCity]);
 
   const addMessage = useCallback((msg: string, isAi: boolean) => {
@@ -156,14 +108,18 @@ export default function Home() {
     setMessages(prev => [...prev, { role: isAi ? 'ai' : 'system', content: msg, time }]);
   }, []);
 
-  // fetchAI dùng languageRef để không bao giờ stale
-  const fetchAI = useCallback(async (prompt: string) => {
+  // ✅ fetchAI nhận thêm locationId để truyền vào RAG
+  const fetchAI = useCallback(async (prompt: string, locationId?: string | null) => {
     const lang = languageRef.current;
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contextPrompt: prompt, language: lang }),
+        body: JSON.stringify({
+          contextPrompt: prompt,
+          locationId: locationId || null,  // ✅ RAG sẽ ưu tiên docs của location này
+          language: lang,
+        }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -177,32 +133,26 @@ export default function Home() {
     }
   }, [addMessage, speakText]);
 
-  // Event listeners
   useEffect(() => {
     const handleNavigateTo = (e: CustomEvent) => {
       setNavigatingTo(e.detail.name);
       setRouteInfo(null);
       addMessage(`${translations[languageRef.current].navigateTo} ${e.detail.name}`, false);
     };
-    const handleRouteFound = (e: CustomEvent) => {
-      setRouteInfo(e.detail);
-    };
-    const handleCancelNav = () => {
-      setNavigatingTo(null);
-      setRouteInfo(null);
-    };
+    const handleRouteFound = (e: CustomEvent) => { setRouteInfo(e.detail); };
+    const handleCancelNav = () => { setNavigatingTo(null); setRouteInfo(null); };
+
+    // ✅ Nhận locationId từ MapContainer
     const handleLocationArrived = (e: CustomEvent) => {
+      const { name, prompt, locationId } = e.detail;
+      setCurrentLocationId(locationId || null); // ✅ cập nhật location hiện tại
       setVisitedCount(prev => prev + 1);
-      addMessage(`${translations[languageRef.current].arrivedAt} ${e.detail.name}`, false);
-      fetchAI(e.detail.prompt);
+      addMessage(`${translations[languageRef.current].arrivedAt} ${name}`, false);
+      fetchAI(prompt, locationId); // ✅ truyền locationId vào RAG
     };
 
-    // ✅ Dừng TTS tự động khi VoiceChat bắt đầu nói
     const handleVoiceChatSpeaking = () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
+      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
     };
 
     window.addEventListener('navigate-to', handleNavigateTo as EventListener);
@@ -223,16 +173,8 @@ export default function Home() {
   const handleStartTour = () => {
     if (!isTracking) {
       navigator.geolocation.getCurrentPosition(
-        () => {
-          setIsTracking(true);
-          addMessage(t.startTour, false);
-          // Edge TTS dùng Audio element → không cần unlock iOS như browser TTS
-        },
-        (error) => {
-          if (error.code === error.PERMISSION_DENIED) {
-            addMessage(t.gpsError, false);
-          }
-        },
+        () => { setIsTracking(true); addMessage(t.startTour, false); },
+        (error) => { if (error.code === error.PERMISSION_DENIED) addMessage(t.gpsError, false); },
         { enableHighAccuracy: false, timeout: 10000 }
       );
     } else {
@@ -240,10 +182,7 @@ export default function Home() {
       setNavigatingTo(null);
       setRouteInfo(null);
       addMessage(t.stopTour, false);
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
+      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
       window.dispatchEvent(new CustomEvent('stop-tracking'));
     }
   };
@@ -257,25 +196,14 @@ export default function Home() {
 
   const toggleMute = () => {
     setIsMuted(prev => {
-      if (!prev) {
-        // Đang bật → tắt tiếng: dừng audio đang phát
-        if (audioRef.current) {
-          audioRef.current.pause();
-          audioRef.current = null;
-        }
-      }
+      if (!prev && audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
       return !prev;
     });
   };
 
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages.length]);
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
-
-  useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
-    }
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   }, []);
 
   return (
@@ -283,25 +211,19 @@ export default function Home() {
 
       {/* Language Selector */}
       <div className="absolute top-4 right-4 z-[1002]">
-        <button
-          onClick={() => setShowLangMenu(!showLangMenu)}
-          className="bg-white/95 backdrop-blur-md shadow-lg rounded-full p-2 flex items-center gap-1"
-        >
+        <button onClick={() => setShowLangMenu(!showLangMenu)}
+          className="bg-white/95 backdrop-blur-md shadow-lg rounded-full p-2 flex items-center gap-1">
           <Globe size={18} className="text-gray-600" />
           <span className="text-sm font-medium">{language.toUpperCase()}</span>
         </button>
         {showLangMenu && (
           <div className="absolute right-0 mt-2 bg-white rounded-xl shadow-lg overflow-hidden">
-            <button
-              onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
-              className={`w-full px-4 py-2 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}
-            >
+            <button onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
+              className={`w-full px-4 py-2 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}>
               🇻🇳 Tiếng Việt
             </button>
-            <button
-              onClick={() => { setLanguage('en'); setShowLangMenu(false); }}
-              className={`w-full px-4 py-2 text-left text-sm ${language === 'en' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}
-            >
+            <button onClick={() => { setLanguage('en'); setShowLangMenu(false); }}
+              className={`w-full px-4 py-2 text-left text-sm ${language === 'en' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50'}`}>
               🇬🇧 English
             </button>
           </div>
@@ -313,20 +235,12 @@ export default function Home() {
           {/* City Selector */}
           <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[1001]">
             <div className="bg-white/95 backdrop-blur-md rounded-full p-1 shadow-lg flex gap-1">
-              <button
-                onClick={() => setSelectedCity('ninh-binh')}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                  selectedCity === 'ninh-binh' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'
-                }`}
-              >
+              <button onClick={() => setSelectedCity('ninh-binh')}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${selectedCity === 'ninh-binh' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
                 🏞️ Ninh Bình
               </button>
-              <button
-                onClick={() => setSelectedCity('hanoi')}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                  selectedCity === 'hanoi' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'
-                }`}
-              >
+              <button onClick={() => setSelectedCity('hanoi')}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${selectedCity === 'hanoi' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
                 🏛️ Hà Nội
               </button>
             </div>
@@ -362,20 +276,12 @@ export default function Home() {
                 </div>
               </div>
               <div className="flex gap-2">
-                <button
-                  onClick={toggleMute}
-                  className={`p-3 rounded-full transition-colors ${isMuted ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-600'}`}
-                >
+                <button onClick={toggleMute}
+                  className={`p-3 rounded-full transition-colors ${isMuted ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-600'}`}>
                   {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
                 </button>
-                <button
-                  onClick={handleStartTour}
-                  className={`p-3 rounded-full shadow-lg transition-all ${
-                    isTracking
-                      ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white'
-                      : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'
-                  }`}
-                >
+                <button onClick={handleStartTour}
+                  className={`p-3 rounded-full shadow-lg transition-all ${isTracking ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white' : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'}`}>
                   <Navigation size={22} className={isTracking ? 'animate-pulse' : ''} />
                 </button>
               </div>
@@ -408,8 +314,8 @@ export default function Home() {
             <MapContainer isTracking={isTracking} selectedCity={selectedCity} language={language} />
           </div>
 
-          {/* THÊM MỚI: Voice Chat nổi góc phải, phía trên chat panel */}
-          <VoiceChat language={language} isMuted={isMuted} />
+          {/* ✅ Truyền currentLocationId xuống VoiceChat để RAG biết đang ở đâu */}
+          <VoiceChat language={language} isMuted={isMuted} locationId={currentLocationId} />
 
           {/* Chat Panel */}
           <div className="h-[28vh] bg-white rounded-t-3xl shadow-2xl z-[1000] flex flex-col">
@@ -449,21 +355,13 @@ export default function Home() {
       {/* Bottom Tab Bar */}
       <div className="bg-white border-t border-gray-200 z-[1002]">
         <div className="flex justify-around items-center py-2 px-4 max-w-md mx-auto">
-          <button
-            onClick={() => setActiveTab('tour')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
-              activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'
-            }`}
-          >
+          <button onClick={() => setActiveTab('tour')}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
             <Map size={24} />
             <span className="text-xs mt-1 font-medium">{t.tour}</span>
           </button>
-          <button
-            onClick={() => setActiveTab('shop')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
-              activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'
-            }`}
-          >
+          <button onClick={() => setActiveTab('shop')}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
             <ShoppingBag size={24} />
             <span className="text-xs mt-1 font-medium">{t.shop}</span>
           </button>
