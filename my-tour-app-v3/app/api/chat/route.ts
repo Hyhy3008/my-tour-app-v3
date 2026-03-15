@@ -10,6 +10,7 @@ export async function GET() {
   return NextResponse.json({ 
     status: 'API is running',
     hasGeminiKey: hasKey,
+    model: 'gemini-2.0-flash-exp', // ✅ Hiển thị model đang dùng
     message: hasKey ? '✅ API Key configured' : '❌ Missing GEMINI_API_KEY',
     timestamp: new Date().toISOString()
   });
@@ -29,12 +30,16 @@ export async function POST(req: Request) {
     if (!apiKey) {
       console.error('❌ GEMINI_API_KEY not found');
       return NextResponse.json({ 
-        error: "API Key chưa cấu hình trên Vercel. Vào Settings → Environment Variables" 
+        error: "API Key chưa cấu hình trên Vercel" 
       }, { status: 500 });
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    
+    // ✅ SỬA: Đổi model mới
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-2.0-flash-exp" 
+    });
 
     const prompt = language === 'en' 
       ? `You are a friendly tour guide in Vietnam for international tourists. Reply in English, short (3-4 sentences), fun and informative with emojis.
@@ -44,7 +49,7 @@ ${contextPrompt}`
 
 ${contextPrompt}`;
 
-    console.log('Calling Gemini AI...');
+    console.log('Calling Gemini 2.0...');
     const result = await model.generateContent(prompt);
     const text = result.response.text();
     console.log('✅ AI responded successfully');
@@ -53,7 +58,8 @@ ${contextPrompt}`;
   } catch (error: any) {
     console.error("❌ Error:", error.message);
     return NextResponse.json({ 
-      error: error.message || "Lỗi AI" 
+      error: error.message || "Lỗi AI",
+      details: error.toString()
     }, { status: 500 });
   }
 }
