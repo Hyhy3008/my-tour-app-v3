@@ -1,21 +1,17 @@
 // app/api/chat/route.ts
-// RAG Pipeline:
-// 1. Embed câu hỏi → vector
-// 2. Tìm trong Supabase (ưu tiên location hiện tại)
-// 3. Ghép context → gửi Cerebras llama3.1-8b
-
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// ✅ KHÔNG khởi tạo supabase ở module level
+// Tạo trong function để tránh lỗi build khi env chưa có
 
-// ============================================
-// Tạo embedding cho query dùng HuggingFace (miễn phí)
-// Model: all-MiniLM-L6-v2 → 384 chiều
-// ============================================
+async function getSupabase() {
+  const { createClient } = await import("@supabase/supabase-js");
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+}
+
 async function embedQuery(text: string): Promise<number[] | null> {
   try {
     const hfKey = process.env.HUGGINGFACE_API_KEY;
@@ -35,43 +31,38 @@ async function embedQuery(text: string): Promise<number[] | null> {
 
     if (!res.ok) return null;
     const data = await res.json();
-    return Array.isArray(data[0]) ? data[0] : data;
+    // all-MiniLM-L6-v2 có thể trả về shape khác nhau
+    if (Array.isArray(data) && Array.isArray(data[0])) return data[0];
+    if (Array.isArray(data)) return data;
+    return null;
   } catch {
     return null;
   }
 }
 
-// ============================================
-// Tìm tài liệu liên quan từ Supabase pgvector
-// Ưu tiên: docs của location hiện tại trước
-// ============================================
 async function searchDocuments(
   queryEmbedding: number[],
   locationId: string | null,
   limit = 4
 ): Promise<string[]> {
   try {
+    const supabase = await getSupabase();
     const { data, error } = await supabase.rpc("search_documents", {
       query_embedding: queryEmbedding,
       current_location: locationId,
       match_count: limit,
     });
-
     if (error) {
       console.error("Supabase search error:", error);
       return [];
     }
-
-    return (data || []).map((d: any) => d.content as string);
+    return (data || []).map((d: any) => String(d.content));
   } catch (e) {
     console.error("Search error:", e);
     return [];
   }
 }
 
-// ============================================
-// Gọi Cerebras llama3.1-8b
-// ============================================
 async function callCerebras(systemPrompt: string, userMessage: string): Promise<string> {
   const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
     method: "POST",
@@ -90,56 +81,74 @@ async function callCerebras(systemPrompt: string, userMessage: string): Promise<
     }),
   });
 
-  if (!res.ok) throw new Error(`Cerebras error: ${res.status}`);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Cerebras error ${res.status}: ${errText}`);
+  }
   const data = await res.json();
   return data.choices?.[0]?.message?.content || "";
 }
 
-// ============================================
-// Main handler
-// ============================================
 export async function POST(req: NextRequest) {
   try {
     const {
-      contextPrompt,  // prompt tự động khi đến địa điểm
-      userQuestion,   // câu hỏi từ VoiceChat
-      locationId,     // 'trang-an' | 'hang-mua' | null
+      contextPrompt,
+      userQuestion,
+      locationId,
       language = "vi",
     } = await req.json();
 
     if (!process.env.CEREBRAS_API_KEY) {
-      return NextResponse.json({ error: "Cerebras API Key chưa cấu hình" }, { status: 500 });
+      return NextResponse.json({ error: "CEREBRAS_API_KEY chưa cấu hình" }, { status: 500 });
     }
 
     const query = userQuestion || contextPrompt || "";
+    if (!query) {
+      return NextResponse.json({ error: "Thiếu nội dung câu hỏi" }, { status: 400 });
+    }
+
     const isArrival = !!contextPrompt && !userQuestion;
 
-    // ── Bước 1: Embed query → tìm tài liệu liên quan ──
+    // Bước 1: RAG - embed + tìm docs
     let ragContext = "";
     const embedding = await embedQuery(query);
 
-    if (embedding) {
+    if (embedding && embedding.length > 0) {
       const docs = await searchDocuments(embedding, locationId || null);
       if (docs.length > 0) {
         ragContext = docs.map((d, i) => `[${i + 1}] ${d}`).join("\n\n");
-        console.log(`✅ RAG: ${docs.length} docs, location=${locationId}`);
+        console.log(`RAG OK: ${docs.length} docs, location=${locationId}`);
       }
+    } else {
+      console.log("RAG skip: no embedding (HUGGINGFACE_API_KEY missing or error)");
     }
 
-    // ── Bước 2: Build system prompt ──
+    // Bước 2: Build prompt
     const hasContext = ragContext.length > 0;
 
     const systemPrompt = language === "en"
-      ? `You are a friendly, knowledgeable tour guide in Vietnam for international tourists.
-${hasContext ? `Use ONLY the reference documents below to answer accurately:\n\n${ragContext}\n\nDo not make up information not in the documents.` : "Use your knowledge to help the tourist."}
-Reply in English, 3-4 sentences max, friendly with emojis.
-${isArrival ? "Tourist just ARRIVED at this location - give a warm welcome and brief intro." : "Answer the tourist's question directly and helpfully."}`
-      : `Bạn là hướng dẫn viên du lịch thân thiện và am hiểu tại Việt Nam.
-${hasContext ? `Chỉ dùng TÀI LIỆU bên dưới để trả lời chính xác:\n\n${ragContext}\n\nKhông bịa thông tin không có trong tài liệu.` : "Dùng kiến thức của bạn để hỗ trợ du khách."}
-Trả lời tiếng Việt, tối đa 3-4 câu, thân thiện, có emoji.
-${isArrival ? "Khách vừa ĐẾN địa điểm - chào đón và giới thiệu tổng quan ngắn gọn." : "Trả lời trực tiếp câu hỏi của khách."}`;
+      ? [
+          "You are a friendly, knowledgeable tour guide in Vietnam.",
+          hasContext
+            ? `Use ONLY the reference documents below:\n\n${ragContext}\n\nDo not invent information.`
+            : "Use your general knowledge to help.",
+          "Reply in English, 3-4 sentences, friendly with emojis.",
+          isArrival
+            ? "The tourist just ARRIVED here - welcome them and give a brief intro."
+            : "Answer the tourist's question directly.",
+        ].join("\n")
+      : [
+          "Bạn là hướng dẫn viên du lịch thân thiện tại Việt Nam.",
+          hasContext
+            ? `Chỉ dùng TÀI LIỆU bên dưới để trả lời:\n\n${ragContext}\n\nKhông bịa thêm thông tin.`
+            : "Dùng kiến thức chung để hỗ trợ du khách.",
+          "Trả lời tiếng Việt, 3-4 câu, thân thiện, có emoji.",
+          isArrival
+            ? "Khách vừa ĐẾN địa điểm - chào đón và giới thiệu tổng quan."
+            : "Trả lời trực tiếp câu hỏi của khách.",
+        ].join("\n");
 
-    // ── Bước 3: Gọi Cerebras ──
+    // Bước 3: Gọi Cerebras
     const reply = await callCerebras(systemPrompt, query);
 
     return NextResponse.json({ reply });
