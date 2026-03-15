@@ -3,15 +3,16 @@
 // POST /api/upload-docs  body: { "password": "your_admin_password" }
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// ✅ Tạo supabase trong function, không ở module level
+async function getSupabase() {
+  const { createClient } = await import("@supabase/supabase-js");
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+}
 
-// Tạo embedding dùng HuggingFace (miễn phí)
-// Model: all-MiniLM-L6-v2 → 384 chiều
 async function createEmbedding(text: string): Promise<number[] | null> {
   try {
     const res = await fetch(
@@ -25,15 +26,14 @@ async function createEmbedding(text: string): Promise<number[] | null> {
         body: JSON.stringify({ inputs: text }),
       }
     );
-
     if (!res.ok) {
       console.error("HF error:", res.status, await res.text());
       return null;
     }
-
     const data = await res.json();
-    // all-MiniLM-L6-v2 trả về array 1 chiều hoặc nested
-    return Array.isArray(data[0]) ? data[0] : data;
+    if (Array.isArray(data) && Array.isArray(data[0])) return data[0];
+    if (Array.isArray(data)) return data;
+    return null;
   } catch (e) {
     console.error("Embed error:", e);
     return null;
@@ -51,6 +51,8 @@ export async function POST(req: NextRequest) {
     if (!process.env.HUGGINGFACE_API_KEY) {
       return NextResponse.json({ error: "HUGGINGFACE_API_KEY chưa cấu hình" }, { status: 500 });
     }
+
+    const supabase = await getSupabase();
 
     // Lấy tất cả rows chưa có embedding
     const { data: rows, error } = await supabase
@@ -77,16 +79,14 @@ export async function POST(req: NextRequest) {
 
     for (const row of rows) {
       try {
-        // Tạo embedding
         const embedding = await createEmbedding(row.content);
 
         if (!embedding) {
           failCount++;
-          results.push({ id: row.id, location_id: row.location_id, status: "fail", reason: "embed returned null" });
+          results.push({ id: row.id, location_id: row.location_id, status: "fail" });
           continue;
         }
 
-        // Update embedding vào DB
         const { error: updateError } = await supabase
           .from("documents")
           .update({ embedding })
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
         results.push({ id: row.id, location_id: row.location_id, status: "ok", dims: embedding.length });
         console.log(`✅ ${row.location_id || "general"} — ${row.content.substring(0, 50)}...`);
 
-        // Delay 600ms để tránh rate limit HuggingFace free tier
+        // Delay tránh rate limit HuggingFace free tier
         await new Promise(r => setTimeout(r, 600));
 
       } catch (e: any) {
