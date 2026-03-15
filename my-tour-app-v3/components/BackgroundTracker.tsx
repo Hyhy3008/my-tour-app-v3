@@ -21,21 +21,29 @@ interface Props {
   onLocationVisited?: () => void;
 }
 
-const UPDATE_THRESHOLD = 10;
+const UPDATE_THRESHOLD = 15; // Tăng lên 15m để giảm re-render
+const THROTTLE_TIME = 2000; // Chỉ update UI mỗi 2 giây
 
 export default function BackgroundTracker({ isTracking, isMuted, onLocationUpdate, onNewMessage, onLocationVisited }: Props) {
   const watchIdRef = useRef<number | null>(null);
   const visitedRef = useRef<Set<string>>(new Set());
   const processingRef = useRef(false);
   const lastUpdateRef = useRef<{ lat: number; lng: number } | null>(null);
+  const lastUpdateTimeRef = useRef<number>(0);
   const { calculateDistance } = useTourLogic();
 
   const speakText = useCallback((text: string) => {
     if (isMuted || !('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
+    
+    // Tắt TTS cũ trước khi bật mới
+    if (window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+    }
+    
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'vi-VN';
     u.rate = 0.9;
+    u.volume = 1;
     window.speechSynthesis.speak(u);
   }, [isMuted]);
 
@@ -44,6 +52,7 @@ export default function BackgroundTracker({ isTracking, isMuted, onLocationUpdat
 
     for (const loc of locations) {
       const dist = calculateDistance(lat, lng, loc.lat, loc.lng);
+      
       if (dist < loc.radius && !visitedRef.current.has(loc.id)) {
         visitedRef.current.add(loc.id);
         processingRef.current = true;
@@ -62,11 +71,9 @@ export default function BackgroundTracker({ isTracking, isMuted, onLocationUpdat
             const data = await res.json();
             onNewMessage(data.reply, true);
             speakText(data.reply);
-          } else {
-            onNewMessage('⚠️ Không thể tải thông tin địa điểm', false);
           }
-        } catch {
-          onNewMessage('⚠️ Lỗi kết nối mạng', false);
+        } catch (err) {
+          console.error('Proximity error:', err);
         } finally {
           processingRef.current = false;
         }
@@ -76,12 +83,18 @@ export default function BackgroundTracker({ isTracking, isMuted, onLocationUpdat
   }, [calculateDistance, onNewMessage, onLocationVisited, speakText]);
 
   const handlePosition = useCallback((position: GeolocationPosition) => {
-    const { latitude, longitude } = position.coords;
+    const { latitude, longitude, accuracy } = position.coords;
+    const now = Date.now();
     
-    console.log(`GPS: ${latitude.toFixed(5)}, ${longitude.toFixed(5)} (±${Math.round(position.coords.accuracy)}m)`);
-    
-    checkProximity(latitude, longitude);
+    // Throttle: Chỉ update UI mỗi 2 giây
+    const timeSinceLastUpdate = now - lastUpdateTimeRef.current;
+    if (timeSinceLastUpdate < THROTTLE_TIME) {
+      // Vẫn check proximity nhưng không update UI
+      checkProximity(latitude, longitude);
+      return;
+    }
 
+    // Kiểm tra khoảng cách di chuyển
     if (lastUpdateRef.current) {
       const distance = calculateDistance(
         lastUpdateRef.current.lat,
@@ -90,54 +103,71 @@ export default function BackgroundTracker({ isTracking, isMuted, onLocationUpdat
         longitude
       );
       
-      if (distance < UPDATE_THRESHOLD) return;
+      if (distance < UPDATE_THRESHOLD) {
+        // Vẫn check proximity
+        checkProximity(latitude, longitude);
+        return;
+      }
     }
 
+    // Update UI
     lastUpdateRef.current = { lat: latitude, lng: longitude };
+    lastUpdateTimeRef.current = now;
     onLocationUpdate({ lat: latitude, lng: longitude });
+    
+    // Check proximity
+    checkProximity(latitude, longitude);
   }, [calculateDistance, checkProximity, onLocationUpdate]);
 
-  const handleError = useCallback((error: GeolocationPositionError) => {
-    console.error('GPS error:', error.code, error.message);
-  }, []);
-
   useEffect(() => {
-    if (isTracking && 'geolocation' in navigator) {
-      lastUpdateRef.current = null;
-      
-      navigator.geolocation.getCurrentPosition(
-        handlePosition,
-        () => {},
-        { 
-          enableHighAccuracy: false,
-          timeout: 5000,
-          maximumAge: 30000
-        }
-      );
-
-      watchIdRef.current = navigator.geolocation.watchPosition(
-        handlePosition,
-        handleError,
-        { 
-          enableHighAccuracy: true,
-          timeout: Infinity,
-          maximumAge: 10000
-        }
-      );
-    } else {
+    if (!isTracking || !('geolocation' in navigator)) {
       if (watchIdRef.current) {
         navigator.geolocation.clearWatch(watchIdRef.current);
         watchIdRef.current = null;
       }
-      window.speechSynthesis?.cancel();
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+      return;
     }
 
+    // Reset state
+    lastUpdateRef.current = null;
+    lastUpdateTimeRef.current = 0;
+    
+    // Lấy vị trí đầu tiên
+    navigator.geolocation.getCurrentPosition(
+      handlePosition,
+      (err) => console.error('Initial GPS error:', err),
+      { 
+        enableHighAccuracy: false,
+        timeout: 5000,
+        maximumAge: 30000
+      }
+    );
+
+    // Watch position với options tối ưu cho mobile
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      handlePosition,
+      (err) => console.error('Watch GPS error:', err),
+      { 
+        enableHighAccuracy: true,
+        timeout: 30000, // 30s timeout
+        maximumAge: 5000 // Cache 5s
+      }
+    );
+
+    // Cleanup
     return () => {
       if (watchIdRef.current) {
         navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
       }
     };
-  }, [isTracking, handlePosition, handleError]);
+  }, [isTracking, handlePosition]);
 
   return null;
 }
