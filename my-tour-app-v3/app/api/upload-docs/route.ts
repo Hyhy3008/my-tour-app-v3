@@ -5,6 +5,10 @@ let embeddingPipeline: any = null;
 
 async function getEmbedding(text: string): Promise<number[] | null> {
   try {
+    // ✅ Trỏ cache sang /tmp
+    const { env } = await import("@xenova/transformers");
+    env.cacheDir = "/tmp/xenova-cache";
+
     if (!embeddingPipeline) {
       const { pipeline } = await import("@xenova/transformers");
       embeddingPipeline = await pipeline(
@@ -66,7 +70,11 @@ export async function POST(req: NextRequest) {
     for (const row of rows) {
       try {
         const embedding = await getEmbedding(row.content);
-        if (!embedding) { failCount++; results.push({ id: row.id, status: "fail" }); continue; }
+        if (!embedding) {
+          failCount++;
+          results.push({ id: row.id, status: "fail" });
+          continue;
+        }
 
         const { error: updateError } = await supabase
           .from("documents")
@@ -76,7 +84,12 @@ export async function POST(req: NextRequest) {
         if (updateError) throw updateError;
 
         successCount++;
-        results.push({ id: row.id, location_id: row.location_id, status: "ok", dims: embedding.length });
+        results.push({
+          id: row.id,
+          location_id: row.location_id,
+          status: "ok",
+          dims: embedding.length,
+        });
         console.log(`✅ ${row.location_id || "general"}`);
       } catch (e: any) {
         failCount++;
@@ -84,7 +97,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true, total: rows.length, success_count: successCount, fail_count: failCount, results });
+    return NextResponse.json({
+      success: true,
+      total: rows.length,
+      success_count: successCount,
+      fail_count: failCount,
+      results,
+    });
 
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
