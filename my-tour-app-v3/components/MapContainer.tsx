@@ -5,17 +5,6 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { useEffect, useState, useRef } from 'react';
 
-// Helper function tính khoảng cách
-function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371e3;
-  const φ1 = (lat1 * Math.PI) / 180;
-  const φ2 = (lat2 * Math.PI) / 180;
-  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
-  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
-  const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
 const userIcon = L.icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
@@ -40,27 +29,45 @@ const locations = [
   { id: "sen", name: "Cánh đồng Sen", lat: 20.2200, lng: 105.9100, radius: 120 },
 ];
 
-// Component vẽ đường đi
-function RoutingMachine({ start, end }: { start: any, end: any }) {
+function RecenterMap({ lat, lng }: { lat: number; lng: number }) {
+  const map = useMap();
+  useEffect(() => {
+    map.flyTo([lat, lng], map.getZoom(), { animate: true, duration: 1 });
+  }, [lat, lng, map]);
+  return null;
+}
+
+interface MapProps {
+  location: { lat: number; lng: number } | null;
+}
+
+export default function MapComponent({ location }: MapProps) {
+  const [selectedDestination, setSelectedDestination] = useState<any>(null);
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const hasNotifiedRef = useRef(false);
-  const lastEndRef = useRef<string | null>(null);
 
+  // Lắng nghe event hủy navigation
   useEffect(() => {
-    if (!start || !end) {
+    const handleCancel = () => {
+      setSelectedDestination(null);
+      setRouteCoords([]);
+      window.dispatchEvent(new CustomEvent('navigation-cancelled'));
+    };
+
+    window.addEventListener('cancel-navigation', handleCancel);
+    return () => window.removeEventListener('cancel-navigation', handleCancel);
+  }, []);
+
+  // Fetch route khi có destination
+  useEffect(() => {
+    if (!location || !selectedDestination) {
       setRouteCoords([]);
       return;
     }
 
-    // Reset khi đổi destination
-    if (lastEndRef.current !== end.id) {
-      hasNotifiedRef.current = false;
-      lastEndRef.current = end.id;
-    }
-
     const fetchRoute = async () => {
       try {
-        const url = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`;
+        const url = `https://router.project-osrm.org/route/v1/driving/${location.lng},${location.lat};${selectedDestination.lng},${selectedDestination.lat}?overview=full&geometries=geojson`;
         
         const response = await fetch(url);
         const data = await response.json();
@@ -72,7 +79,7 @@ function RoutingMachine({ start, end }: { start: any, end: any }) {
           );
           setRouteCoords(coords);
           
-          // Chỉ thông báo 1 lần
+          // Thông báo route info (chỉ 1 lần khi chọn destination mới)
           if (!hasNotifiedRef.current) {
             hasNotifiedRef.current = true;
             window.dispatchEvent(new CustomEvent('route-found', { 
@@ -89,65 +96,23 @@ function RoutingMachine({ start, end }: { start: any, end: any }) {
     };
 
     fetchRoute();
-  }, [start?.lat, start?.lng, end?.id]);
+  }, [location, selectedDestination]);
 
-  if (routeCoords.length === 0) return null;
-
-  return (
-    <>
-      {/* Viền đường */}
-      <Polyline 
-        positions={routeCoords} 
-        color="#1e40af" 
-        weight={8} 
-        opacity={0.4} 
-      />
-      {/* Đường chính */}
-      <Polyline 
-        positions={routeCoords} 
-        color="#3b82f6" 
-        weight={5} 
-        opacity={0.9} 
-      />
-    </>
-  );
-}
-
-function RecenterMap({ lat, lng }: { lat: number; lng: number }) {
-  const map = useMap();
+  // Reset flag khi đổi destination
   useEffect(() => {
-    map.flyTo([lat, lng], map.getZoom(), { animate: true, duration: 1 });
-  }, [lat, lng, map]);
-  return null;
-}
-
-interface MapProps {
-  location: { lat: number; lng: number } | null;
-}
-
-export default function MapComponent({ location }: MapProps) {
-  const [selectedDestination, setSelectedDestination] = useState<any>(null);
-
-  // Lắng nghe event hủy navigation
-  useEffect(() => {
-    const handleCancelNavigation = () => {
-      setSelectedDestination(null);
-    };
-
-    window.addEventListener('cancel-navigation', handleCancelNavigation);
-    return () => {
-      window.removeEventListener('cancel-navigation', handleCancelNavigation);
-    };
-  }, []);
+    hasNotifiedRef.current = false;
+  }, [selectedDestination?.id]);
 
   const handleSelectDestination = (loc: any) => {
     if (selectedDestination?.id === loc.id) {
       // Bấm lại thì hủy
       setSelectedDestination(null);
-      window.dispatchEvent(new CustomEvent('cancel-navigation'));
+      setRouteCoords([]);
+      window.dispatchEvent(new CustomEvent('navigation-cancelled'));
     } else {
-      // Chọn destination mới
+      // Chọn mới
       setSelectedDestination(loc);
+      hasNotifiedRef.current = false;
       window.dispatchEvent(new CustomEvent('navigate-to', { detail: loc }));
     }
   };
@@ -159,7 +124,6 @@ export default function MapComponent({ location }: MapProps) {
       style={{ height: '100%', width: '100%' }} 
       zoomControl={false}
     >
-      {/* Bản đồ Carto Voyager */}
       <TileLayer 
         url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
         attribution='&copy; OpenStreetMap &copy; CARTO'
@@ -167,11 +131,11 @@ export default function MapComponent({ location }: MapProps) {
       />
 
       {/* Vẽ đường đi */}
-      {location && selectedDestination && (
-        <RoutingMachine 
-          start={location} 
-          end={selectedDestination}
-        />
+      {routeCoords.length > 0 && (
+        <>
+          <Polyline positions={routeCoords} color="#1e40af" weight={8} opacity={0.4} />
+          <Polyline positions={routeCoords} color="#3b82f6" weight={5} opacity={0.9} />
+        </>
       )}
 
       {/* Các địa điểm */}
@@ -196,10 +160,10 @@ export default function MapComponent({ location }: MapProps) {
                 {location && (
                   <button
                     onClick={() => handleSelectDestination(loc)}
-                    className={`mt-2 px-3 py-1.5 text-white text-xs rounded-lg font-medium transition ${
+                    className={`mt-2 px-3 py-1.5 text-white text-xs rounded-lg font-medium ${
                       selectedDestination?.id === loc.id 
-                        ? 'bg-red-500 hover:bg-red-600' 
-                        : 'bg-blue-500 hover:bg-blue-600'
+                        ? 'bg-red-500' 
+                        : 'bg-blue-500'
                     }`}
                   >
                     {selectedDestination?.id === loc.id ? '❌ Hủy' : '🗺️ Chỉ đường'}
@@ -216,12 +180,7 @@ export default function MapComponent({ location }: MapProps) {
         <>
           <Marker position={[location.lat, location.lng]} icon={userIcon}>
             <Popup>
-              <div className="text-center">
-                <p className="font-bold">🧭 Vị trí của bạn</p>
-                <p className="text-xs text-gray-500">
-                  {location.lat.toFixed(5)}, {location.lng.toFixed(5)}
-                </p>
-              </div>
+              <p className="font-bold text-center">🧭 Vị trí của bạn</p>
             </Popup>
           </Marker>
           <RecenterMap lat={location.lat} lng={location.lng} />
