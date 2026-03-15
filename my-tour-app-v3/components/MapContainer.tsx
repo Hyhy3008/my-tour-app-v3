@@ -3,7 +3,7 @@
 import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 
 const userIcon = L.icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
@@ -29,11 +29,45 @@ const locations = [
   { id: "sen", name: "Cánh đồng Sen", lat: 20.2200, lng: 105.9100, radius: 120 },
 ];
 
-function RecenterMap({ lat, lng }: { lat: number; lng: number }) {
+// Thresholds
+const RECENTER_THRESHOLD = 20; // Chỉ recenter khi di chuyển > 20m
+const ROUTE_THRESHOLD = 50; // Chỉ tính lại route khi di chuyển > 50m
+
+// Hàm tính khoảng cách
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371e3;
+  const φ1 = (lat1 * Math.PI) / 180;
+  const φ2 = (lat2 * Math.PI) / 180;
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Component recenter - chỉ recenter khi di chuyển > threshold
+function SmartRecenter({ lat, lng }: { lat: number; lng: number }) {
   const map = useMap();
+  const lastCenterRef = useRef<{ lat: number; lng: number } | null>(null);
+
   useEffect(() => {
-    map.flyTo([lat, lng], map.getZoom(), { animate: true, duration: 1 });
+    if (lastCenterRef.current) {
+      const distance = calculateDistance(
+        lastCenterRef.current.lat,
+        lastCenterRef.current.lng,
+        lat,
+        lng
+      );
+      
+      // Chỉ recenter khi di chuyển > threshold
+      if (distance < RECENTER_THRESHOLD) {
+        return;
+      }
+    }
+
+    lastCenterRef.current = { lat, lng };
+    map.flyTo([lat, lng], map.getZoom(), { animate: true, duration: 0.5 });
   }, [lat, lng, map]);
+
   return null;
 }
 
@@ -44,13 +78,16 @@ interface MapProps {
 export default function MapComponent({ location }: MapProps) {
   const [selectedDestination, setSelectedDestination] = useState<any>(null);
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
+  const lastRouteLocationRef = useRef<{ lat: number; lng: number } | null>(null);
   const hasNotifiedRef = useRef(false);
+  const fetchingRef = useRef(false);
 
   // Lắng nghe event hủy navigation
   useEffect(() => {
     const handleCancel = () => {
       setSelectedDestination(null);
       setRouteCoords([]);
+      lastRouteLocationRef.current = null;
       window.dispatchEvent(new CustomEvent('navigation-cancelled'));
     };
 
@@ -58,12 +95,32 @@ export default function MapComponent({ location }: MapProps) {
     return () => window.removeEventListener('cancel-navigation', handleCancel);
   }, []);
 
-  // Fetch route khi có destination
+  // Fetch route - chỉ khi di chuyển > threshold
   useEffect(() => {
     if (!location || !selectedDestination) {
       setRouteCoords([]);
+      lastRouteLocationRef.current = null;
       return;
     }
+
+    // Check xem có cần tính lại route không
+    if (lastRouteLocationRef.current) {
+      const distance = calculateDistance(
+        lastRouteLocationRef.current.lat,
+        lastRouteLocationRef.current.lng,
+        location.lat,
+        location.lng
+      );
+      
+      // Chưa di chuyển đủ xa -> không tính lại
+      if (distance < ROUTE_THRESHOLD) {
+        return;
+      }
+    }
+
+    // Tránh fetch nhiều lần cùng lúc
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
 
     const fetchRoute = async () => {
       try {
@@ -78,41 +135,40 @@ export default function MapComponent({ location }: MapProps) {
             (coord: number[]) => [coord[1], coord[0]] as [number, number]
           );
           setRouteCoords(coords);
+          lastRouteLocationRef.current = { lat: location.lat, lng: location.lng };
           
-          // Thông báo route info (chỉ 1 lần khi chọn destination mới)
-          if (!hasNotifiedRef.current) {
-            hasNotifiedRef.current = true;
-            window.dispatchEvent(new CustomEvent('route-found', { 
-              detail: {
-                distance: (route.distance / 1000).toFixed(1),
-                time: Math.round(route.duration / 60)
-              }
-            }));
-          }
+          // Cập nhật thông tin route
+          window.dispatchEvent(new CustomEvent('route-found', { 
+            detail: {
+              distance: (route.distance / 1000).toFixed(1),
+              time: Math.round(route.duration / 60)
+            }
+          }));
         }
       } catch (error) {
         console.error('Routing error:', error);
+      } finally {
+        fetchingRef.current = false;
       }
     };
 
     fetchRoute();
   }, [location, selectedDestination]);
 
-  // Reset flag khi đổi destination
+  // Reset khi đổi destination
   useEffect(() => {
     hasNotifiedRef.current = false;
+    lastRouteLocationRef.current = null;
   }, [selectedDestination?.id]);
 
   const handleSelectDestination = (loc: any) => {
     if (selectedDestination?.id === loc.id) {
-      // Bấm lại thì hủy
       setSelectedDestination(null);
       setRouteCoords([]);
+      lastRouteLocationRef.current = null;
       window.dispatchEvent(new CustomEvent('navigation-cancelled'));
     } else {
-      // Chọn mới
       setSelectedDestination(loc);
-      hasNotifiedRef.current = false;
       window.dispatchEvent(new CustomEvent('navigate-to', { detail: loc }));
     }
   };
@@ -161,9 +217,7 @@ export default function MapComponent({ location }: MapProps) {
                   <button
                     onClick={() => handleSelectDestination(loc)}
                     className={`mt-2 px-3 py-1.5 text-white text-xs rounded-lg font-medium ${
-                      selectedDestination?.id === loc.id 
-                        ? 'bg-red-500' 
-                        : 'bg-blue-500'
+                      selectedDestination?.id === loc.id ? 'bg-red-500' : 'bg-blue-500'
                     }`}
                   >
                     {selectedDestination?.id === loc.id ? '❌ Hủy' : '🗺️ Chỉ đường'}
@@ -183,7 +237,7 @@ export default function MapComponent({ location }: MapProps) {
               <p className="font-bold text-center">🧭 Vị trí của bạn</p>
             </Popup>
           </Marker>
-          <RecenterMap lat={location.lat} lng={location.lng} />
+          <SmartRecenter lat={location.lat} lng={location.lng} />
         </>
       )}
     </MapContainer>
