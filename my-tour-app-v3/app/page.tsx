@@ -73,6 +73,8 @@ export default function Home() {
   const [routeInfo, setRouteInfo] = useState<{ distance: string; time: number } | null>(null);
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
   const [currentLocationId, setCurrentLocationId] = useState<string | null>(null);
+  const [gpsPermission, setGpsPermission] = useState<'granted' | 'denied' | 'prompt' | 'unknown'>('unknown');
+  const [micPermission, setMicPermission] = useState<'granted' | 'denied' | 'prompt' | 'unknown'>('unknown');
 
   // ✅ Memory state
   const [memory, setMemory] = useState<ConversationMemory>(emptyMemory());
@@ -275,6 +277,39 @@ export default function Home() {
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   }, []);
 
+  // ✅ Check và theo dõi permission GPS + Mic
+  useEffect(() => {
+    if (!('permissions' in navigator)) return;
+    // Check GPS
+    navigator.permissions.query({ name: 'geolocation' }).then(r => {
+      setGpsPermission(r.state as any);
+      r.onchange = () => setGpsPermission(r.state as any);
+    }).catch(() => {});
+    // Check Mic
+    navigator.permissions.query({ name: 'microphone' as PermissionName }).then(r => {
+      setMicPermission(r.state as any);
+      r.onchange = () => setMicPermission(r.state as any);
+    }).catch(() => {});
+  }, []);
+
+  const requestGPS = () => {
+    navigator.geolocation.getCurrentPosition(
+      () => setGpsPermission('granted'),
+      () => setGpsPermission('denied'),
+      { timeout: 5000 }
+    );
+  };
+
+  const requestMic = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(t => t.stop());
+      setMicPermission('granted');
+    } catch {
+      setMicPermission('denied');
+    }
+  };
+
   // ✅ Warm up GPS ngay khi load - để lần bấm Start không phải chờ
   // GPS chip cần thời gian khởi động, warm up trước giúp bấm nút là định vị ngay
   useEffect(() => {
@@ -315,6 +350,45 @@ export default function Home() {
             </button>
           </div>
         )}
+      </div>
+
+      {/* ✅ Permission indicators - nhỏ gọn, góc trái */}
+      <div className="absolute top-4 left-4 z-[1002] flex gap-1.5">
+        {/* GPS indicator */}
+        <button
+          onClick={requestGPS}
+          title={gpsPermission === 'granted' ? 'GPS OK' : 'Tap để cấp quyền GPS'}
+          className={`w-8 h-8 rounded-full flex items-center justify-center shadow-md transition-all active:scale-95 ${
+            gpsPermission === 'granted'
+              ? 'bg-green-500 text-white'
+              : gpsPermission === 'denied'
+                ? 'bg-red-500 text-white animate-pulse'
+                : 'bg-white/95 text-gray-500'
+          }`}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+          </svg>
+        </button>
+
+        {/* Mic indicator */}
+        <button
+          onClick={requestMic}
+          title={micPermission === 'granted' ? 'Mic OK' : 'Tap để cấp quyền Microphone'}
+          className={`w-8 h-8 rounded-full flex items-center justify-center shadow-md transition-all active:scale-95 ${
+            micPermission === 'granted'
+              ? 'bg-green-500 text-white'
+              : micPermission === 'denied'
+                ? 'bg-red-500 text-white animate-pulse'
+                : 'bg-white/95 text-gray-500'
+          }`}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <rect x="9" y="2" width="6" height="12" rx="3"/>
+            <path d="M5 10a7 7 0 0 0 14 0M12 19v3M9 22h6"/>
+          </svg>
+        </button>
       </div>
 
       {activeTab === 'tour' && (
