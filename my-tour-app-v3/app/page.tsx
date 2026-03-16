@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { Navigation, MapPin, Volume2, VolumeX, X, Map, ShoppingBag, Globe } from 'lucide-react';
+import { Navigation, MapPin, Volume2, VolumeX, CheckCircle, X, Map, ShoppingBag, Globe } from 'lucide-react';
 import ShopTab from '@/components/ShopTab';
 import VoiceChat from '@/components/VoiceChat';
 
@@ -31,10 +31,6 @@ interface StoredConversationMemory {
   expiresAt: number;
   data: ConversationMemory;
 }
-
-type Language = 'vi' | 'en';
-type CityType = 'ninh-binh' | 'hanoi';
-type TabType = 'tour' | 'shop';
 
 const MEMORY_KEY_PREFIX = 'tour_conversation_memory';
 const LEGACY_MEMORY_KEY = 'tour_conversation_memory';
@@ -87,6 +83,10 @@ const translations = {
   },
 };
 
+type Language = 'vi' | 'en';
+type CityType = 'ninh-binh' | 'hanoi';
+type TabType = 'tour' | 'shop';
+
 const getMemoryKey = (city: CityType) => `${MEMORY_KEY_PREFIX}_${city}`;
 
 export default function Home() {
@@ -115,69 +115,52 @@ export default function Home() {
   const selectedCityRef = useRef<CityType>(selectedCity);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  useEffect(() => {
-    isMutedRef.current = isMuted;
-  }, [isMuted]);
-
-  useEffect(() => {
-    languageRef.current = language;
-  }, [language]);
-
-  useEffect(() => {
-    memoryRef.current = memory;
-  }, [memory]);
-
-  useEffect(() => {
-    selectedCityRef.current = selectedCity;
-  }, [selectedCity]);
+  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
+  useEffect(() => { languageRef.current = language; }, [language]);
+  useEffect(() => { memoryRef.current = memory; }, [memory]);
+  useEffect(() => { selectedCityRef.current = selectedCity; }, [selectedCity]);
 
   const t = translations[language];
 
   // =========================
-  // Memory helpers
+  // MEMORY HELPERS
   // =========================
-  const persistMemoryToStorage = useCallback((city: CityType, m: ConversationMemory) => {
+  const writeMemoryToStorage = useCallback((city: CityType, value: ConversationMemory) => {
     try {
-      const payload: StoredConversationMemory = {
+      const wrapped: StoredConversationMemory = {
         expiresAt: Date.now() + MEMORY_TTL_MS,
-        data: m,
+        data: value,
       };
-      localStorage.setItem(getMemoryKey(city), JSON.stringify(payload));
-    } catch (e) {
-      console.error('persistMemoryToStorage error:', e);
-    }
-  }, []);
-
-  const removeMemoryFromStorage = useCallback((city: CityType) => {
-    try {
-      localStorage.removeItem(getMemoryKey(city));
+      localStorage.setItem(getMemoryKey(city), JSON.stringify(wrapped));
     } catch {}
   }, []);
 
   const readMemoryFromStorage = useCallback((city: CityType): ConversationMemory => {
     try {
-      const raw = localStorage.getItem(getMemoryKey(city));
+      const cityKey = getMemoryKey(city);
+      const raw = localStorage.getItem(cityKey);
 
-      // 1) đọc key mới có TTL
+      // format mới: { expiresAt, data }
       if (raw) {
-        const parsed = JSON.parse(raw) as StoredConversationMemory | ConversationMemory;
+        const parsed = JSON.parse(raw);
 
-        // format mới
         if (
           parsed &&
           typeof parsed === 'object' &&
-          'data' in parsed &&
-          'expiresAt' in parsed
+          'expiresAt' in parsed &&
+          'data' in parsed
         ) {
           const wrapped = parsed as StoredConversationMemory;
+
           if (Date.now() > wrapped.expiresAt) {
-            localStorage.removeItem(getMemoryKey(city));
+            localStorage.removeItem(cityKey);
             return emptyMemory();
           }
+
           return wrapped.data || emptyMemory();
         }
 
-        // format cũ không TTL -> migrate
+        // format cũ: ConversationMemory thuần
         if (
           parsed &&
           typeof parsed === 'object' &&
@@ -185,34 +168,33 @@ export default function Home() {
           'recentMessages' in parsed &&
           'messageCount' in parsed
         ) {
-          const legacyMemory = parsed as ConversationMemory;
-          persistMemoryToStorage(city, legacyMemory);
-          return legacyMemory;
+          const legacy = parsed as ConversationMemory;
+          writeMemoryToStorage(city, legacy);
+          return legacy;
         }
       }
 
-      // 2) migrate key cũ global nếu có
+      // migrate key cũ global nếu có
       const legacyRaw = localStorage.getItem(LEGACY_MEMORY_KEY);
       if (legacyRaw) {
-        const legacyMemory = JSON.parse(legacyRaw) as ConversationMemory;
+        const parsedLegacy = JSON.parse(legacyRaw);
         if (
-          legacyMemory &&
-          typeof legacyMemory === 'object' &&
-          'summary' in legacyMemory &&
-          'recentMessages' in legacyMemory &&
-          'messageCount' in legacyMemory
+          parsedLegacy &&
+          typeof parsedLegacy === 'object' &&
+          'summary' in parsedLegacy &&
+          'recentMessages' in parsedLegacy &&
+          'messageCount' in parsedLegacy
         ) {
-          persistMemoryToStorage(city, legacyMemory);
+          const legacyMemory = parsedLegacy as ConversationMemory;
+          writeMemoryToStorage(city, legacyMemory);
           localStorage.removeItem(LEGACY_MEMORY_KEY);
           return legacyMemory;
         }
       }
-    } catch (e) {
-      console.error('readMemoryFromStorage error:', e);
-    }
+    } catch {}
 
     return emptyMemory();
-  }, [persistMemoryToStorage]);
+  }, [writeMemoryToStorage]);
 
   const loadMemoryForCity = useCallback((city: CityType) => {
     const loaded = readMemoryFromStorage(city);
@@ -223,49 +205,30 @@ export default function Home() {
   const saveMemory = useCallback((m: ConversationMemory) => {
     setMemory(m);
     memoryRef.current = m;
-    persistMemoryToStorage(selectedCityRef.current, m);
-  }, [persistMemoryToStorage]);
+    writeMemoryToStorage(selectedCityRef.current, m);
+  }, [writeMemoryToStorage]);
 
-  const clearMemory = useCallback((city?: CityType) => {
-    const targetCity = city || selectedCityRef.current;
-    removeMemoryFromStorage(targetCity);
-    if (targetCity === selectedCityRef.current) {
-      const empty = emptyMemory();
-      setMemory(empty);
-      memoryRef.current = empty;
-    }
-  }, [removeMemoryFromStorage]);
-
-  // =========================
-  // Load memory on mount
-  // =========================
+  // Load memory lần đầu
   useEffect(() => {
     loadMemoryForCity(selectedCity);
   }, [loadMemoryForCity, selectedCity]);
 
-  // =========================
   // Check permissions
-  // =========================
   useEffect(() => {
     if (!('permissions' in navigator)) return;
-
     navigator.permissions.query({ name: 'geolocation' }).then(r => {
       setGpsOk(r.state === 'granted');
       r.onchange = () => setGpsOk(r.state === 'granted');
     }).catch(() => {});
-
     navigator.permissions.query({ name: 'microphone' as PermissionName }).then(r => {
       setMicOk(r.state === 'granted');
       r.onchange = () => setMicOk(r.state === 'granted');
     }).catch(() => {});
   }, []);
 
-  // =========================
   // Warm up GPS
-  // =========================
   useEffect(() => {
     if (!('geolocation' in navigator)) return;
-
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setGpsOk(true);
@@ -278,13 +241,9 @@ export default function Home() {
     );
   }, []);
 
-  // =========================
   // Service worker
-  // =========================
   useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
-    }
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   }, []);
 
   const requestGPS = () => {
@@ -319,7 +278,6 @@ export default function Home() {
 
   const speakText = useCallback(async (text: string) => {
     if (isMutedRef.current) return;
-
     try {
       if (audioRef.current) {
         audioRef.current.pause();
@@ -355,12 +313,7 @@ export default function Home() {
     }
   }, []);
 
-  // =========================
-  // Khi đổi city:
-  // reset UI, dừng tracking/audio
-  // nhưng KHÔNG xóa memory
-  // load memory của city mới
-  // =========================
+  // ✅ Đổi city: reset UI nhưng KHÔNG xóa memory
   useEffect(() => {
     if (isTracking) {
       setIsTracking(false);
@@ -382,19 +335,12 @@ export default function Home() {
   }, [selectedCity, isTracking, loadMemoryForCity]);
 
   const addMessage = useCallback((msg: string, isAi: boolean) => {
-    const time = new Date().toLocaleTimeString('vi-VN', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-    setMessages(prev => [
-      ...prev,
-      { role: isAi ? 'ai' : 'system', content: msg, time }
-    ]);
+    const time = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+    setMessages(prev => [...prev, { role: isAi ? 'ai' : 'system', content: msg, time }]);
   }, []);
 
   const fetchAI = useCallback(async (prompt: string, locationId?: string | null) => {
     const lang = languageRef.current;
-
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -411,10 +357,7 @@ export default function Home() {
         const data = await res.json();
         addMessage(data.reply, true);
         speakText(data.reply);
-
-        if (data.memoryUpdate) {
-          saveMemory(data.memoryUpdate);
-        }
+        if (data.memoryUpdate) saveMemory(data.memoryUpdate);
       } else {
         addMessage(translations[lang].loadError, false);
       }
@@ -525,12 +468,14 @@ export default function Home() {
 
   return (
     <div className="flex flex-col h-[100dvh] bg-gray-100 overflow-hidden relative">
+
       {activeTab === 'tour' && (
         <>
           {/* ══ HEADER ══ */}
           <div className="absolute top-0 left-0 right-0 z-[1000] p-3">
             <div className="bg-white/95 backdrop-blur-md shadow-lg rounded-2xl overflow-hidden">
-              {/* Row 1 */}
+
+              {/* Row 1: luôn hiện - Logo + Title + Start + Collapse */}
               <div className="flex items-center gap-3 px-4 pt-3 pb-3">
                 <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shrink-0">
                   <MapPin className="text-white" size={22} />
@@ -556,6 +501,7 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* Start tour */}
                 <button
                   onClick={handleStartTour}
                   className={`w-14 h-14 rounded-2xl shadow-lg transition-all active:scale-95 flex items-center justify-center shrink-0 ${
@@ -567,6 +513,7 @@ export default function Home() {
                   <Navigation size={26} className={isTracking ? 'animate-pulse' : ''} />
                 </button>
 
+                {/* Toggle collapse */}
                 <button
                   onClick={() => setHeaderCollapsed(p => !p)}
                   className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center shrink-0 active:scale-95 transition-all"
@@ -578,16 +525,14 @@ export default function Home() {
                     fill="none"
                     stroke="currentColor"
                     strokeWidth="2.5"
-                    style={{
-                      transform: headerCollapsed ? 'rotate(180deg)' : 'rotate(0deg)',
-                      transition: 'transform 0.2s'
-                    }}
+                    style={{ transform: headerCollapsed ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
                   >
                     <path d="M18 15l-6-6-6 6" />
                   </svg>
                 </button>
               </div>
 
+              {/* Expandable rows - ẩn khi collapsed */}
               {!headerCollapsed && (
                 <>
                   {/* Row 2: City selector */}
@@ -610,7 +555,7 @@ export default function Home() {
                     </button>
                   </div>
 
-                  {/* Row 3 */}
+                  {/* Row 3: GPS, Mic, Sound, Language */}
                   <div className="flex items-center gap-2 px-4 pb-3 border-t border-gray-100 pt-2">
                     <button
                       onClick={requestGPS}
@@ -660,7 +605,6 @@ export default function Home() {
                         <Globe size={14} />
                         {language.toUpperCase()}
                       </button>
-
                       {showLangMenu && (
                         <div className="absolute right-0 bottom-12 bg-white rounded-xl shadow-xl overflow-hidden z-10 w-36">
                           <button
@@ -743,14 +687,11 @@ export default function Home() {
               {messages.map((m, i) => (
                 <div key={i} className={`flex ${m.role === 'ai' ? 'justify-start' : 'justify-center'}`}>
                   <div className={`max-w-[90%] p-3 rounded-2xl text-sm ${
-                    m.role === 'ai'
-                      ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100'
-                      : 'bg-gray-100 text-gray-500 text-xs'
+                    m.role === 'ai' ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100'
+                    : 'bg-gray-100 text-gray-500 text-xs'
                   }`}>
                     <p className="whitespace-pre-wrap leading-relaxed">{m.content}</p>
-                    {m.role === 'ai' && (
-                      <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>
-                    )}
+                    {m.role === 'ai' && <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>}
                   </div>
                 </div>
               ))}
@@ -770,9 +711,7 @@ export default function Home() {
         <div className="flex justify-around items-center py-2 px-4 max-w-md mx-auto">
           <button
             onClick={() => setActiveTab('tour')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
-              activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'
-            }`}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}
           >
             <Map size={24} />
             <span className="text-xs mt-1 font-medium">{t.tour}</span>
@@ -780,9 +719,7 @@ export default function Home() {
 
           <button
             onClick={() => setActiveTab('shop')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
-              activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'
-            }`}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}
           >
             <ShoppingBag size={24} />
             <span className="text-xs mt-1 font-medium">{t.shop}</span>
