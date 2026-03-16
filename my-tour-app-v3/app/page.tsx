@@ -21,6 +21,21 @@ interface Message {
   time: string;
 }
 
+// Memory lưu vào localStorage
+interface ConversationMemory {
+  summary: string;
+  recentMessages: { role: string; content: string }[];
+  messageCount: number;
+}
+
+const MEMORY_KEY = 'tour_conversation_memory';
+
+const emptyMemory = (): ConversationMemory => ({
+  summary: "",
+  recentMessages: [],
+  messageCount: 0,
+});
+
 const translations = {
   vi: {
     tour: 'Tour', shop: 'Mua sắm', tracking: 'Đang theo dõi', waiting: 'Chờ kích hoạt',
@@ -58,6 +73,11 @@ export default function Home() {
   const [routeInfo, setRouteInfo] = useState<{ distance: string; time: number } | null>(null);
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
   const [currentLocationId, setCurrentLocationId] = useState<string | null>(null);
+
+  // ✅ Memory state
+  const [memory, setMemory] = useState<ConversationMemory>(emptyMemory());
+  const memoryRef = useRef<ConversationMemory>(emptyMemory());
+
   const chatEndRef = useRef<HTMLDivElement>(null);
   const isMutedRef = useRef(isMuted);
   const languageRef = useRef(language);
@@ -65,8 +85,31 @@ export default function Home() {
 
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
   useEffect(() => { languageRef.current = language; }, [language]);
+  useEffect(() => { memoryRef.current = memory; }, [memory]);
 
   const t = translations[language];
+
+  // ✅ Load memory từ localStorage khi khởi động
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(MEMORY_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setMemory(parsed);
+        memoryRef.current = parsed;
+        console.log(`📚 Loaded memory: ${parsed.messageCount} msgs, summary: "${parsed.summary?.substring(0, 50)}..."`);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // ✅ Lưu memory vào localStorage mỗi khi thay đổi
+  const saveMemory = useCallback((newMemory: ConversationMemory) => {
+    setMemory(newMemory);
+    memoryRef.current = newMemory;
+    try {
+      localStorage.setItem(MEMORY_KEY, JSON.stringify(newMemory));
+    } catch { /* ignore */ }
+  }, []);
 
   const speakText = useCallback(async (text: string) => {
     if (isMutedRef.current) return;
@@ -88,6 +131,7 @@ export default function Home() {
     } catch (e) { console.error('speakText error:', e); }
   }, []);
 
+  // ✅ Reset city → reset memory
   useEffect(() => {
     if (isTracking) {
       setIsTracking(false);
@@ -99,6 +143,8 @@ export default function Home() {
     setNavigatingTo(null);
     setCurrentLocationId(null);
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    // Reset memory khi đổi city
+    saveMemory(emptyMemory());
   }, [selectedCity]);
 
   const addMessage = useCallback((msg: string, isAi: boolean) => {
@@ -106,25 +152,42 @@ export default function Home() {
     setMessages(prev => [...prev, { role: isAi ? 'ai' : 'system', content: msg, time }]);
   }, []);
 
+  // ✅ fetchAI gửi kèm memory
   const fetchAI = useCallback(async (prompt: string, locationId?: string | null) => {
     const lang = languageRef.current;
+    const currentMemory = memoryRef.current;
+
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contextPrompt: prompt, locationId: locationId || null, language: lang }),
+        body: JSON.stringify({
+          contextPrompt: prompt,
+          locationId: locationId || null,
+          language: lang,
+          conversationMemory: currentMemory, // ✅ gửi kèm memory
+        }),
       });
+
       if (res.ok) {
         const data = await res.json();
         addMessage(data.reply, true);
         speakText(data.reply);
+
+        // ✅ Cập nhật memory từ response
+        if (data.memoryUpdate) {
+          saveMemory(data.memoryUpdate);
+          if (data.memoryUpdate.didSummarize) {
+            console.log('🗜️ Memory summarized!');
+          }
+        }
       } else {
         addMessage(translations[lang].loadError, false);
       }
     } catch {
       addMessage(translations[lang].loadError, false);
     }
-  }, [addMessage, speakText]);
+  }, [addMessage, speakText, saveMemory]);
 
   useEffect(() => {
     const handleNavigateTo = (e: CustomEvent) => {
@@ -222,11 +285,9 @@ export default function Home() {
 
       {activeTab === 'tour' && (
         <>
-          {/* ✅ Header gộp City Selector vào trong - không che nút navigation */}
+          {/* Header + City Selector */}
           <div className="absolute top-0 left-0 right-20 z-[1000] p-3">
             <div className="bg-white/95 backdrop-blur-md shadow-lg rounded-2xl p-3">
-
-              {/* Row 1: Logo + Status + Buttons */}
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-2">
                   <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
@@ -240,6 +301,12 @@ export default function Home() {
                       <span className="text-xs bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
                         <CheckCircle size={10} /> {language.toUpperCase()}
                       </span>
+                      {/* ✅ Hiện message count */}
+                      {memory.messageCount > 0 && (
+                        <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full">
+                          💬 {memory.messageCount}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-1.5">
                       <span className={`w-1.5 h-1.5 rounded-full ${isTracking ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
@@ -254,7 +321,6 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
-
                 <div className="flex gap-1.5">
                   <button onClick={toggleMute}
                     className={`p-2.5 rounded-full transition-colors ${isMuted ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-600'}`}>
@@ -271,7 +337,7 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Row 2: City Selector */}
+              {/* City Selector */}
               <div className="flex gap-1.5 mt-2">
                 <button onClick={() => setSelectedCity('ninh-binh')}
                   className={`flex-1 py-1.5 rounded-xl text-xs font-medium transition-all ${
@@ -286,7 +352,6 @@ export default function Home() {
                   🏛️ Hà Nội
                 </button>
               </div>
-
             </div>
           </div>
 
@@ -317,13 +382,28 @@ export default function Home() {
           </div>
 
           {/* Voice Chat */}
-          <VoiceChat language={language} isMuted={isMuted} locationId={currentLocationId} />
+          <VoiceChat
+            language={language}
+            isMuted={isMuted}
+            locationId={currentLocationId}
+            memory={memory}
+            onMemoryUpdate={saveMemory}
+          />
 
           {/* Chat Panel */}
           <div className="h-[28vh] bg-white rounded-t-3xl shadow-2xl z-[1000] flex flex-col">
             <div className="flex justify-center pt-2 pb-1">
               <div className="w-10 h-1 bg-gray-300 rounded-full" />
             </div>
+            {/* ✅ Hiện summary nếu có */}
+            {memory.summary && (
+              <div className="px-4 pb-1">
+                <div className="bg-purple-50 rounded-xl px-3 py-1.5 flex items-start gap-1.5">
+                  <span className="text-purple-400 text-xs mt-0.5">🧠</span>
+                  <p className="text-xs text-purple-600 line-clamp-2">{memory.summary}</p>
+                </div>
+              </div>
+            )}
             <div className="flex-grow overflow-y-auto px-4 pb-4 space-y-3">
               {messages.length === 0 && (
                 <div className="flex flex-col items-center justify-center h-full text-center">
