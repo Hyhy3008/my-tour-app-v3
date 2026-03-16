@@ -5,6 +5,9 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { useEffect, useRef, useState, useCallback } from 'react';
 
+// ✅ Share vị trí GPS - tránh gọi getCurrentPosition thêm lần nữa khi routing
+const sharedPositionRef = { current: null as { lat: number; lng: number } | null };
+
 // Icons - GIỮ NGUYÊN
 const userIcon = L.icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
@@ -138,6 +141,8 @@ function GPSTracker({ isTracking, selectedCity }: { isTracking: boolean; selecte
 
     const handlePosition = (position: GeolocationPosition) => {
       const { latitude, longitude, accuracy } = position.coords;
+      // ✅ Lưu vị trí mới nhất để RoutingControl dùng ngay không cần hỏi lại
+      sharedPositionRef.current = { lat: latitude, lng: longitude };
 
       markerRef.current?.setLatLng([latitude, longitude]);
       accuracyCircleRef.current?.setLatLng([latitude, longitude]);
@@ -165,7 +170,7 @@ function GPSTracker({ isTracking, selectedCity }: { isTracking: boolean; selecte
         if (dist < loc.radius && !visitedRef.current.has(loc.id)) {
           visitedRef.current.add(loc.id);
           window.dispatchEvent(new CustomEvent('location-arrived', {
-            detail: { name: loc.name, prompt: loc.prompt }
+            detail: { name: loc.name, prompt: loc.prompt, locationId: loc.id }
           }));
           break;
         }
@@ -210,6 +215,7 @@ function RoutingControl({ isTracking, selectedCity, language }: { isTracking: bo
   const polylineRef = useRef<L.Polyline | null>(null);
   const shadowPolylineRef = useRef<L.Polyline | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [routeInfo, setRouteInfo] = useState<{ distance: string; time: number; name: string } | null>(null);
   const fetchingRef = useRef(false);
 
   const locations = locationsData[selectedCity];
@@ -219,6 +225,7 @@ function RoutingControl({ isTracking, selectedCity, language }: { isTracking: bo
     polylineRef.current = null;
     shadowPolylineRef.current?.remove();
     shadowPolylineRef.current = null;
+    setRouteInfo(null);
   }, []);
 
   // Reset khi đổi city
@@ -250,28 +257,44 @@ function RoutingControl({ isTracking, selectedCity, language }: { isTracking: bo
       return;
     }
 
-    if (!isTracking) {
-      alert(language === 'vi' ? 'Vui lòng bấm Start Tour trước!' : 'Please start the tour first!');
-      return;
-    }
-
     if (fetchingRef.current) return;
     fetchingRef.current = true;
 
     setSelectedId(loc.id);
+    // ✅ Dispatch ngay lập tức - không chờ route tính xong
     window.dispatchEvent(new CustomEvent('navigate-to', { detail: loc }));
 
     try {
-      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: false,
-          timeout: 5000,
-        });
-      });
+      // ✅ Dùng vị trí cached từ GPSTracker - KHÔNG gọi getCurrentPosition lại (tốn 2-5s)
+      let userLat: number;
+      let userLng: number;
 
-      const { latitude, longitude } = position.coords;
-      const url = `https://router.project-osrm.org/route/v1/driving/${longitude},${latitude};${loc.lng},${loc.lat}?overview=full&geometries=geojson`;
-      const res = await fetch(url);
+      if (sharedPositionRef.current) {
+        // Có vị trí cached → dùng ngay, nhanh hơn rất nhiều
+        userLat = sharedPositionRef.current.lat;
+        userLng = sharedPositionRef.current.lng;
+      } else {
+        // Chưa có vị trí → lấy lần đầu
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: false,
+            timeout: 10000,
+            maximumAge: 30000,
+          });
+        });
+        userLat = position.coords.latitude;
+        userLng = position.coords.longitude;
+        sharedPositionRef.current = { lat: userLat, lng: userLng };
+      }
+
+      // ✅ Dùng OSRM với timeout ngắn hơn
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+      const url = `https://router.project-osrm.org/route/v1/driving/${userLng},${userLat};${loc.lng},${loc.lat}?overview=full&geometries=geojson`;
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
       const data = await res.json();
 
       if (data.routes?.[0]) {
@@ -283,28 +306,29 @@ function RoutingControl({ isTracking, selectedCity, language }: { isTracking: bo
         clearRoute();
 
         shadowPolylineRef.current = L.polyline(coords, {
-          color: '#1e40af',
-          weight: 8,
-          opacity: 0.3,
+          color: '#1e40af', weight: 8, opacity: 0.3,
         }).addTo(map);
 
         polylineRef.current = L.polyline(coords, {
-          color: '#3b82f6',
-          weight: 5,
-          opacity: 0.9,
+          color: '#3b82f6', weight: 5, opacity: 0.9,
         }).addTo(map);
 
         map.fitBounds(polylineRef.current.getBounds(), { padding: [50, 50] });
 
-        window.dispatchEvent(new CustomEvent('route-found', {
-          detail: {
-            distance: (route.distance / 1000).toFixed(1),
-            time: Math.round(route.duration / 60)
-          }
-        }));
+        const routeDetail = {
+          distance: (route.distance / 1000).toFixed(1),
+          time: Math.round(route.duration / 60),
+          name: loc.name,
+        };
+        setRouteInfo(routeDetail);
+        window.dispatchEvent(new CustomEvent('route-found', { detail: routeDetail }));
       }
-    } catch (error) {
-      console.error('Routing error:', error);
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.error('Routing timeout');
+      } else {
+        console.error('Routing error:', error);
+      }
       setSelectedId(null);
       window.dispatchEvent(new CustomEvent('navigation-cancelled'));
     } finally {
@@ -329,24 +353,29 @@ function RoutingControl({ isTracking, selectedCity, language }: { isTracking: bo
           />
           <Marker position={[loc.lat, loc.lng]} icon={locationIcon}>
             <Popup>
-              <div className="text-center p-1 min-w-[120px]">
+              <div className="text-center p-1 min-w-[140px]">
                 <p className="font-bold text-gray-800">📍 {loc.name}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {language === 'vi' ? 'Bán kính' : 'Radius'}: {loc.radius}m
-                </p>
+                <p className="text-xs text-gray-500 mt-0.5">{loc.radius}m radius</p>
                 <button
                   onClick={() => handleSelectDestination(loc)}
-                  className={`mt-2 px-4 py-2 text-white text-xs rounded-lg font-medium transition-colors ${
+                  className={`mt-2 px-4 py-2 text-white text-xs rounded-lg font-medium transition-colors w-full ${
                     selectedId === loc.id
                       ? 'bg-red-500 hover:bg-red-600'
                       : 'bg-blue-500 hover:bg-blue-600'
                   }`}
                 >
-                  {selectedId === loc.id 
-                    ? (language === 'vi' ? '❌ Hủy' : '❌ Cancel')
+                  {selectedId === loc.id
+                    ? (language === 'vi' ? '❌ Hủy chỉ đường' : '❌ Cancel')
                     : (language === 'vi' ? '🗺️ Chỉ đường' : '🗺️ Navigate')
                   }
                 </button>
+                {/* ✅ Hiện route info ngay trong Popup - không banner che màn hình */}
+                {selectedId === loc.id && routeInfo && routeInfo.name === loc.name && (
+                  <div className="mt-2 bg-blue-50 rounded-lg p-2 text-xs text-blue-700">
+                    <span className="mr-2">📏 {routeInfo.distance}km</span>
+                    <span>⏱️ {routeInfo.time} {language === 'vi' ? 'phút' : 'min'}</span>
+                  </div>
+                )}
               </div>
             </Popup>
           </Marker>
