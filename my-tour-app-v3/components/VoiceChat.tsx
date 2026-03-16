@@ -35,8 +35,8 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
   const [isOpen, setIsOpen] = useState(false);
   const [mode, setMode] = useState<ChatMode>('ask');
   const [isListening, setIsListening] = useState(false);
-  const [isThinking, setIsThinking] = useState(false);  // Đang chờ API
-  const [isSpeaking, setIsSpeaking] = useState(false);  // ✅ THÊM: Đang phát audio
+  const [isThinking, setIsThinking] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState('');
@@ -54,6 +54,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
   const freeTalkActiveRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Free talk guards
   const ftSentRef = useRef(false);
   const isPlayingRef = useRef(false);
 
@@ -77,10 +78,10 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       audioRef.current = null;
     }
     isPlayingRef.current = false;
-    setIsSpeaking(false);  // ✅ Reset state
+    setIsSpeaking(false);
   }, []);
 
-  // ✅ Phát audio với state tracking
+  // ✅ FIX Bug 1: speakText tự quản lý isPlayingRef
   const speakText = useCallback(async (text: string, onDone?: () => void) => {
     if (isMutedRef.current) {
       onDone?.();
@@ -105,35 +106,37 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audioRef.current = audio;
+      
+      // ✅ Set playing state TẠI ĐÂY - chỉ 1 chỗ duy nhất
       isPlayingRef.current = true;
-      setIsSpeaking(true);  // ✅ Đánh dấu đang phát
+      setIsSpeaking(true);
 
-      const cleanup = () => {
+      audio.onended = () => {
         URL.revokeObjectURL(url);
         audioRef.current = null;
         isPlayingRef.current = false;
-        setIsSpeaking(false);  // ✅ Reset
-      };
-
-      audio.onended = () => {
-        cleanup();
+        setIsSpeaking(false);
         onDone?.();
       };
 
       audio.onerror = () => {
-        cleanup();
+        URL.revokeObjectURL(url);
+        audioRef.current = null;
+        isPlayingRef.current = false;
+        setIsSpeaking(false);
         onDone?.();
       };
 
       await audio.play();
     } catch (e) {
       console.error('TTS error:', e);
+      isPlayingRef.current = false;
       setIsSpeaking(false);
       onDone?.();
     }
   }, [stopAudio]);
 
-  // Gọi AI
+  // ✅ FIX Bug 1: Không set isPlayingRef trong askAI, để speakText tự handle
   const askAI = useCallback(async (userText: string, isFreeChat = false, onDone?: () => void) => {
     setIsThinking(true);
     setMessages(prev => [...prev, { role: 'user', content: userText }]);
@@ -164,10 +167,10 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
           memoryRef.current = data.memoryUpdate;
         }
 
-        setIsThinking(false);  // ✅ API xong, chuyển sang phát audio
+        setIsThinking(false);
         stopPageAudio();
 
-        if (isFreeChat) isPlayingRef.current = true;
+        // ✅ FIX: Không set isPlayingRef ở đây, speakText sẽ tự set
         await new Promise<void>(resolve => speakText(data.reply, resolve));
       } else {
         setIsThinking(false);
@@ -176,24 +179,20 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       console.error('AI error:', e);
       setIsThinking(false);
     } finally {
-      isPlayingRef.current = false;
-      setIsSpeaking(false);
+      // ✅ FIX: Chỉ gọi onDone, không set isPlayingRef (speakText đã cleanup)
       onDone?.();
     }
   }, [speakText, stopPageAudio]);
 
   // ══════════════════════════════════════
-  // ASK MODE - ✅ ĐÃ FIX
+  // ASK MODE
   // ══════════════════════════════════════
   const startAskListening = useCallback(() => {
-    // ✅ Luôn dừng audio khi user bấm nút
+    // Luôn dừng audio khi user bấm
     stopPageAudio();
     stopAudio();
 
-    // Nếu đang chờ API, không làm gì (vẫn phải chờ)
     if (isThinking) return;
-
-    // Nếu đang nghe rồi, không làm gì
     if (isListening) return;
 
     setError('');
@@ -289,7 +288,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
   }, []);
 
   // ══════════════════════════════════════
-  // FREE TALK MODE
+  // FREE TALK MODE - ✅ FIX Bug 2
   // ══════════════════════════════════════
   const startFreeTalkListening = useCallback(() => {
     if (!freeTalkActiveRef.current) return;
@@ -327,6 +326,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
 
       if (!newText.trim()) return;
 
+      // INTERRUPT: Nếu AI đang phát audio → dừng ngay
       if (isPlayingRef.current) {
         stopAudio();
         accumulatedText = newText.trim();
@@ -337,6 +337,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
         return;
       }
 
+      // Bình thường: Tích lũy text
       accumulatedText = (accumulatedText + ' ' + newText).trim();
       setTranscript(accumulatedText);
 
@@ -344,6 +345,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       silenceTimerRef.current = setTimeout(() => sendAccumulated(), 1800);
     };
 
+    // ✅ FIX Bug 2: Không gọi r.stop() trong sendAccumulated
     const sendAccumulated = () => {
       if (ftSentRef.current) return;
 
@@ -352,20 +354,23 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
 
       ftSentRef.current = true;
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-
-      isStartedRef.current = false;
-      try { r.stop(); } catch {}
+      
+      // ✅ FIX: KHÔNG gọi r.stop() - để recognition tiếp tục chạy
+      // Recognition sẽ tự dừng khi browser cần, hoặc khi user tắt free talk
+      
       setTranscript('');
-      setIsListening(false);
+      // Không set isListening = false vì recognition vẫn chạy
+      
+      // Reset accumulated text cho lần sau
+      accumulatedText = '';
 
+      // Gọi AI, khi xong sẽ restart
       askAI(textToSend, true, () => {
-        if (freeTalkActiveRef.current) {
-          setTimeout(() => {
-            if (freeTalkActiveRef.current) {
-              startFreeTalkListening();
-            }
-          }, 300);
-        }
+        // Khi AI trả lời xong (kể cả phát audio xong)
+        ftSentRef.current = false;  // ✅ Reset để có thể gửi tiếp
+        
+        // Recognition vẫn đang chạy, không cần restart
+        // Nếu recognition đã dừng (do timeout/error), onend sẽ restart
       });
     };
 
@@ -376,9 +381,10 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       if (e.error === 'aborted') return;
 
       if (e.error === 'no-speech') {
+        // Không có speech, restart nếu vẫn active
         if (freeTalkActiveRef.current && !ftSentRef.current) {
           setTimeout(() => {
-            if (freeTalkActiveRef.current && !isStartedRef.current && !ftSentRef.current) {
+            if (freeTalkActiveRef.current && !isStartedRef.current) {
               startFreeTalkListening();
             }
           }, 200);
@@ -396,11 +402,11 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       isStartedRef.current = false;
       setIsListening(false);
 
-      if (ftSentRef.current) return;
-
-      if (freeTalkActiveRef.current) {
+      // ✅ FIX: Chỉ restart nếu chưa gửi hoặc đã gửi xong
+      // Nếu đang chờ AI trả lời (ftSentRef=true nhưng chưa onDone), không restart
+      if (freeTalkActiveRef.current && !ftSentRef.current) {
         setTimeout(() => {
-          if (freeTalkActiveRef.current && !isStartedRef.current && !ftSentRef.current) {
+          if (freeTalkActiveRef.current && !isStartedRef.current) {
             startFreeTalkListening();
           }
         }, 200);
@@ -412,6 +418,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
 
   const toggleFreeTalk = useCallback(() => {
     if (freeTalkActive) {
+      // Dừng Free Talk
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       ftSentRef.current = true;
       if (recognitionRef.current && isStartedRef.current) {
@@ -422,6 +429,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       setIsListening(false);
       setTranscript('');
     } else {
+      // Bắt đầu Free Talk
       ftSentRef.current = false;
       setFreeTalkActive(true);
       setError('');
@@ -444,7 +452,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     isStartedRef.current = false;
   };
 
-  // ✅ Xác định trạng thái nút
+  // Xác định trạng thái nút
   const getButtonState = () => {
     if (isListening) return 'listening';
     if (isThinking) return 'thinking';
@@ -592,19 +600,18 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
             <div className="px-4 py-4 border-t border-gray-100 bg-white">
               {mode === 'ask' ? (
                 <div className="flex flex-col items-center gap-2">
-                  {/* ✅ NÚT MIC - KHÔNG DISABLE KHI SPEAKING */}
                   <button
                     onPointerDown={startAskListening}
                     onPointerUp={stopAskListening}
                     onPointerLeave={stopAskListening}
-                    disabled={isThinking}  // ✅ Chỉ disable khi đang chờ API
+                    disabled={isThinking}
                     className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 select-none touch-none ${
                       buttonState === 'listening'
                         ? 'bg-red-500 text-white scale-110 animate-pulse'
                         : buttonState === 'thinking'
                         ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                         : buttonState === 'speaking'
-                        ? 'bg-gradient-to-br from-green-400 to-emerald-500 text-white'  // ✅ Màu khác khi đang nói
+                        ? 'bg-gradient-to-br from-green-400 to-emerald-500 text-white'
                         : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white'
                     }`}
                   >
@@ -613,13 +620,12 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                     ) : buttonState === 'listening' ? (
                       <MicOff size={36} />
                     ) : buttonState === 'speaking' ? (
-                      <Square size={36} />  // ✅ Icon Stop khi đang nói
+                      <Square size={36} />
                     ) : (
                       <Mic size={36} />
                     )}
                   </button>
 
-                  {/* ✅ Text hướng dẫn */}
                   <p className="text-xs text-gray-400 text-center">
                     {buttonState === 'listening' ? (
                       <span className="text-red-500 font-medium">
@@ -637,7 +643,6 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                   </p>
                 </div>
               ) : (
-                /* FREE TALK MODE - giữ nguyên */
                 <div className="flex flex-col items-center gap-2">
                   <button
                     onClick={toggleFreeTalk}
@@ -655,6 +660,8 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                     ) : freeTalkActive ? (
                       isListening ? (
                         <Mic size={36} className="animate-pulse" />
+                      ) : isSpeaking ? (
+                        <Square size={36} className="animate-pulse" />
                       ) : (
                         <Radio size={36} className="animate-pulse" />
                       )
@@ -670,13 +677,11 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                       </span>
                     ) : freeTalkActive ? (
                       <span className="text-green-600">
-                        {isListening
-                          ? language === 'vi'
-                            ? '🔴 Đang nghe... (dừng 2s để gửi)'
-                            : '🔴 Listening... (pause 2s to send)'
-                          : language === 'vi'
-                          ? '⏳ Chờ bạn nói...'
-                          : '⏳ Waiting for you...'}
+                        {isSpeaking
+                          ? (language === 'vi' ? '🔊 AI đang nói... (nói để ngắt)' : '🔊 AI speaking... (speak to interrupt)')
+                          : isListening
+                          ? (language === 'vi' ? '🔴 Đang nghe... (dừng 2s để gửi)' : '🔴 Listening... (pause 2s to send)')
+                          : (language === 'vi' ? '⏳ Chờ bạn nói...' : '⏳ Waiting for you...')}
                       </span>
                     ) : (
                       <span className="text-gray-400">
