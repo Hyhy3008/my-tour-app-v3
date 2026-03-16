@@ -54,7 +54,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Free talk guards
-  const ftSentRef = useRef(false);          // da gui lan nay chua — guard tuyet doi chong double-send
+  const ftSentRef = useRef(false);
   const isPlayingRef = useRef(false);
 
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
@@ -65,25 +65,42 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
   useEffect(() => { onMemoryUpdateRef.current = onMemoryUpdate; }, [onMemoryUpdate]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
+  // ✅ Dừng audio của trang chính (tour guide)
   const stopPageAudio = useCallback(() => {
     window.dispatchEvent(new CustomEvent('voice-chat-speaking'));
   }, []);
 
+  // ✅ Dừng audio của Voice Chat
   const stopAudio = useCallback(() => {
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
     isPlayingRef.current = false;
   }, []);
 
+  // ✅ Phát giọng nói AI
   const speakText = useCallback(async (text: string, onDone?: () => void) => {
-    if (isMutedRef.current) { onDone?.(); return; }
+    if (isMutedRef.current) {
+      onDone?.();
+      return;
+    }
+
     try {
       stopAudio();
+
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, language: languageRef.current }),
       });
-      if (!res.ok) { onDone?.(); return; }
+
+      if (!res.ok) {
+        onDone?.();
+        return;
+      }
+
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
@@ -96,18 +113,32 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
         isPlayingRef.current = false;
       };
 
-      audio.onended = () => { cleanup(); onDone?.(); };
-      audio.onerror = () => { cleanup(); onDone?.(); };
+      audio.onended = () => {
+        cleanup();
+        onDone?.();
+      };
+
+      audio.onerror = () => {
+        cleanup();
+        onDone?.();
+      };
+
       await audio.play();
-    } catch { onDone?.(); }
+    } catch (e) {
+      console.error('TTS error:', e);
+      onDone?.();
+    }
   }, [stopAudio]);
 
+  // ✅ Gọi AI
   const askAI = useCallback(async (userText: string, isFreeChat = false, onDone?: () => void) => {
     setIsThinking(true);
     setMessages(prev => [...prev, { role: 'user', content: userText }]);
+
     const lang = languageRef.current;
     const locId = locationIdRef.current;
     const currentMemory = memoryRef.current || { summary: '', recentMessages: [], messageCount: 0 };
+
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -120,20 +151,24 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
           freeChat: isFreeChat,
         }),
       });
+
       if (res.ok) {
         const data = await res.json();
         setMessages(prev => [...prev, { role: 'ai', content: data.reply }]);
+
         if (data.memoryUpdate && onMemoryUpdateRef.current) {
           onMemoryUpdateRef.current(data.memoryUpdate);
           memoryRef.current = data.memoryUpdate;
         }
+
         stopPageAudio();
-        // Danh dau dang phat truoc khi play
+
         if (isFreeChat) isPlayingRef.current = true;
         await new Promise<void>(resolve => speakText(data.reply, resolve));
       }
-    } catch (e) { console.error('AI error:', e); }
-    finally {
+    } catch (e) {
+      console.error('AI error:', e);
+    } finally {
       setIsThinking(false);
       isPlayingRef.current = false;
       onDone?.();
@@ -141,15 +176,23 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
   }, [speakText, stopPageAudio]);
 
   // ══════════════════════════════════════
-  // ASK MODE
+  // ASK MODE - Giữ nút để nói
   // ══════════════════════════════════════
   const startAskListening = useCallback(() => {
     if (isThinking || isListening) return;
-    setError(''); setTranscript('');
-    stopPageAudio(); stopAudio();
+
+    setError('');
+    setTranscript('');
+
+    // ✅ Dừng tất cả audio khi user bắt đầu nói
+    stopPageAudio();
+    stopAudio();
 
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { setError(language === 'vi' ? '❌ Dùng Chrome hoặc Safari!' : '❌ Use Chrome or Safari!'); return; }
+    if (!SR) {
+      setError(language === 'vi' ? '❌ Dùng Chrome hoặc Safari!' : '❌ Use Chrome or Safari!');
+      return;
+    }
 
     const r = new SR();
     r.lang = languageRef.current === 'vi' ? 'vi-VN' : 'en-US';
@@ -157,63 +200,89 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     r.interimResults = true;
     recognitionRef.current = r;
     isStartedRef.current = false;
+
     let lastInterim = '';
     let hasSent = false;
 
-    r.onstart = () => { isStartedRef.current = true; setIsListening(true); };
+    r.onstart = () => {
+      isStartedRef.current = true;
+      setIsListening(true);
+    };
+
     r.onresult = (e: any) => {
-      let interim = '', final = '';
+      let interim = '';
+      let final = '';
+
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) final += t; else interim += t;
+        if (e.results[i].isFinal) {
+          final += t;
+        } else {
+          interim += t;
+        }
       }
+
       setTranscript(final || interim);
+
+      // Final result - gửi ngay
       if (final && !hasSent) {
         hasSent = true;
         if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        isStartedRef.current = false; setIsListening(false);
-        r.stop(); askAI(final.trim());
+        isStartedRef.current = false;
+        setIsListening(false);
+        r.stop();
+        askAI(final.trim());
         return;
       }
+
+      // Interim - đợi silence
       if (interim !== lastInterim) {
         lastInterim = interim;
         if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = setTimeout(() => {
           if (isStartedRef.current && interim.trim().length > 1 && !hasSent) {
             hasSent = true;
-            isStartedRef.current = false; setIsListening(false);
-            r.stop(); askAI(interim.trim());
+            isStartedRef.current = false;
+            setIsListening(false);
+            r.stop();
+            askAI(interim.trim());
           }
         }, 1500);
       }
     };
+
     r.onerror = (e: any) => {
-      isStartedRef.current = false; setIsListening(false);
+      isStartedRef.current = false;
+      setIsListening(false);
+
       if (e.error === 'aborted') return;
-      if (e.error === 'not-allowed') setError(language === 'vi' ? '❌ Cần cấp quyền Mic!' : '❌ Mic permission denied!');
-      else if (e.error !== 'no-speech') setError(`Error: ${e.error}`);
+
+      if (e.error === 'not-allowed') {
+        setError(language === 'vi' ? '❌ Cần cấp quyền Mic!' : '❌ Mic permission denied!');
+      } else if (e.error !== 'no-speech') {
+        setError(`Error: ${e.error}`);
+      }
     };
-    r.onend = () => { isStartedRef.current = false; setIsListening(false); };
+
+    r.onend = () => {
+      isStartedRef.current = false;
+      setIsListening(false);
+    };
+
     r.start();
   }, [isThinking, isListening, askAI, stopPageAudio, stopAudio, language]);
 
   const stopAskListening = useCallback(() => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    if (recognitionRef.current && isStartedRef.current) recognitionRef.current.stop();
+    if (recognitionRef.current && isStartedRef.current) {
+      recognitionRef.current.stop();
+    }
     setIsListening(false);
   }, []);
 
-  // ══════════════════════════════════════════════════════════════
-  // FREE TALK MODE
-  //
-  // Approach: Recognition LUON CHAY lien tuc (ke ca khi AI dang phat audio).
-  // Khi AI dang noi ma recognition bat duoc speech -> stopAudio() ngay.
-  // Sau do tiep tuc tich luy text binh thuong.
-  //
-  // isAudioPlaying ref: biet co dang phat khong -> quyet dinh interrupt hay accumulate
-  // ftSentRef: guard khong gui 2 lan
-  // accumulatedText: local closure, reset moi startFreeTalkListening()
-  // ══════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════
+  // FREE TALK MODE - Trò chuyện liên tục
+  // ══════════════════════════════════════
   const startFreeTalkListening = useCallback(() => {
     if (!freeTalkActiveRef.current) return;
     if (isStartedRef.current) return;
@@ -224,11 +293,12 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     const r = new SR();
     r.lang = languageRef.current === 'vi' ? 'vi-VN' : 'en-US';
     r.continuous = true;
-    r.interimResults = false; // chi final, khong lap
+    r.interimResults = false;
 
     recognitionRef.current = r;
     isStartedRef.current = false;
     ftSentRef.current = false;
+
     let accumulatedText = '';
 
     r.onstart = () => {
@@ -242,24 +312,25 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
 
       let newText = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) newText += e.results[i][0].transcript;
+        if (e.results[i].isFinal) {
+          newText += e.results[i][0].transcript;
+        }
       }
+
       if (!newText.trim()) return;
 
-      // ── INTERRUPT: Neu AI dang phat audio -> dung ngay, reset accumulated
-      // Recognition van tiep tuc chay, user noi tiep binh thuong
+      // INTERRUPT: Nếu AI đang phát audio -> dừng ngay
       if (isPlayingRef.current) {
-        stopAudio(); // triggers audio.onended nhung ta khong restart la duoc
-        accumulatedText = ''; // bo phan text bi nghe nham tu audio AI
-        // Lay text user vua noi lam diem bat dau moi
+        stopAudio();
         accumulatedText = newText.trim();
         setTranscript(accumulatedText);
+
         if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = setTimeout(() => sendAccumulated(), 1800);
         return;
       }
 
-      // ── BINH THUONG: Tich luy text
+      // Bình thường: Tích lũy text
       accumulatedText = (accumulatedText + ' ' + newText).trim();
       setTranscript(accumulatedText);
 
@@ -269,22 +340,24 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
 
     const sendAccumulated = () => {
       if (ftSentRef.current) return;
+
       const textToSend = accumulatedText.trim();
       if (textToSend.length < 2 || !freeTalkActiveRef.current) return;
 
       ftSentRef.current = true;
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      // Dung recognition hien tai
+
       isStartedRef.current = false;
       try { r.stop(); } catch {}
       setTranscript('');
       setIsListening(false);
 
-      // Goi AI; khi xong (bao gom ca phat audio) moi restart lang nghe
       askAI(textToSend, true, () => {
         if (freeTalkActiveRef.current) {
           setTimeout(() => {
-            if (freeTalkActiveRef.current) startFreeTalkListening();
+            if (freeTalkActiveRef.current) {
+              startFreeTalkListening();
+            }
           }, 300);
         }
       });
@@ -293,7 +366,9 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     r.onerror = (e: any) => {
       isStartedRef.current = false;
       setIsListening(false);
+
       if (e.error === 'aborted') return;
+
       if (e.error === 'no-speech') {
         if (freeTalkActiveRef.current && !ftSentRef.current) {
           setTimeout(() => {
@@ -304,6 +379,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
         }
         return;
       }
+
       if (e.error === 'not-allowed') {
         setFreeTalkActive(false);
         setError(language === 'vi' ? '❌ Cần cấp quyền Mic!' : '❌ Mic permission denied!');
@@ -313,7 +389,9 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     r.onend = () => {
       isStartedRef.current = false;
       setIsListening(false);
-      if (ftSentRef.current) return; // da gui -> cho onDone restart
+
+      if (ftSentRef.current) return;
+
       if (freeTalkActiveRef.current) {
         setTimeout(() => {
           if (freeTalkActiveRef.current && !isStartedRef.current && !ftSentRef.current) {
@@ -324,19 +402,22 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     };
 
     try { r.start(); } catch {}
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [askAI, stopAudio, language]);
 
   const toggleFreeTalk = useCallback(() => {
     if (freeTalkActive) {
+      // Dừng Free Talk
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      ftSentRef.current = true; // ngan onend restart
-      if (recognitionRef.current && isStartedRef.current) { try { recognitionRef.current.stop(); } catch {} }
+      ftSentRef.current = true;
+      if (recognitionRef.current && isStartedRef.current) {
+        try { recognitionRef.current.stop(); } catch {}
+      }
       stopAudio();
       setFreeTalkActive(false);
       setIsListening(false);
       setTranscript('');
     } else {
+      // Bắt đầu Free Talk
       ftSentRef.current = false;
       setFreeTalkActive(true);
       setError('');
@@ -347,7 +428,9 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
   const handleClose = () => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     ftSentRef.current = true;
-    if (recognitionRef.current && isStartedRef.current) { try { recognitionRef.current.stop(); } catch {} }
+    if (recognitionRef.current && isStartedRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+    }
     stopAudio();
     setFreeTalkActive(false);
     setIsOpen(false);
@@ -357,11 +440,9 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     isStartedRef.current = false;
   };
 
-
-
   return (
     <>
-      {/* Nut mo Voice Chat */}
+      {/* Nút mở Voice Chat */}
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
@@ -376,7 +457,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       {isOpen && (
         <div className="absolute bottom-16 left-0 right-0 z-[1001] p-3">
           <div className="bg-white rounded-3xl shadow-2xl overflow-hidden border border-gray-100">
-
+            
             {/* Header */}
             <div className="bg-gradient-to-r from-purple-500 to-pink-500 px-4 py-3">
               <div className="flex items-center justify-between mb-2">
@@ -384,16 +465,23 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                   <Mic size={18} />
                   <span className="font-semibold">AI Voice Chat</span>
                   {locationId && (
-                    <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">📍 {locationId}</span>
+                    <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">
+                      📍 {locationId}
+                    </span>
                   )}
                 </div>
                 <button onClick={handleClose} className="text-white/80 hover:text-white">
                   <X size={20} />
                 </button>
               </div>
+
+              {/* Mode Tabs */}
               <div className="flex gap-2">
                 <button
-                  onClick={() => { setMode('ask'); if (freeTalkActive) toggleFreeTalk(); }}
+                  onClick={() => {
+                    setMode('ask');
+                    if (freeTalkActive) toggleFreeTalk();
+                  }}
                   className={`flex-1 py-1.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
                     mode === 'ask' ? 'bg-white text-purple-600' : 'bg-white/20 text-white'
                   }`}
@@ -427,7 +515,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                   ) : (
                     <>
                       <Radio size={28} className="text-purple-300" />
-                      <p className="text-gray-400 text-xs">
+                      <p className="text-gray-400 text-xs whitespace-pre-line">
                         {language === 'vi'
                           ? 'Bấm Start để bắt đầu trò chuyện\nNói tự nhiên, dừng 2s AI sẽ trả lời'
                           : 'Tap Start to begin\nSpeak naturally, pause 2s and AI replies'}
@@ -436,15 +524,21 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                   )}
                 </div>
               )}
+
               {messages.map((m, i) => (
                 <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[85%] px-3 py-2 rounded-2xl text-sm ${
-                    m.role === 'user'
-                      ? 'bg-purple-500 text-white'
-                      : 'bg-white border border-gray-200 text-gray-800'
-                  }`}>{m.content}</div>
+                  <div
+                    className={`max-w-[85%] px-3 py-2 rounded-2xl text-sm ${
+                      m.role === 'user'
+                        ? 'bg-purple-500 text-white'
+                        : 'bg-white border border-gray-200 text-gray-800'
+                    }`}
+                  >
+                    {m.content}
+                  </div>
                 </div>
               ))}
+
               {isThinking && (
                 <div className="flex justify-start">
                   <div className="bg-white border border-gray-200 px-3 py-2 rounded-2xl flex items-center gap-2">
@@ -454,7 +548,8 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                     </span>
                   </div>
                 </div>
-          )}
+              )}
+
               <div ref={messagesEndRef} />
             </div>
 
@@ -462,8 +557,12 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
             {(isListening || transcript) && (
               <div className="px-4 py-2 bg-purple-50 border-t border-purple-100">
                 <p className="text-xs text-purple-600 flex items-center gap-1.5">
-                  {isListening && <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse inline-block shrink-0" />}
-                  <span className="truncate">{transcript || (language === 'vi' ? 'Đang nghe...' : 'Listening...')}</span>
+                  {isListening && (
+                    <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse inline-block shrink-0" />
+                  )}
+                  <span className="truncate">
+                    {transcript || (language === 'vi' ? 'Đang nghe...' : 'Listening...')}
+                  </span>
                 </p>
               </div>
             )}
@@ -485,19 +584,33 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                     onPointerLeave={stopAskListening}
                     disabled={isThinking}
                     className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 select-none touch-none ${
-                      isListening ? 'bg-red-500 text-white scale-110 animate-pulse'
-                      : isThinking ? 'bg-gray-200 text-gray-400'
-                      : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white'
+                      isListening
+                        ? 'bg-red-500 text-white scale-110 animate-pulse'
+                        : isThinking
+                        ? 'bg-gray-200 text-gray-400'
+                        : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white'
                     }`}
                   >
-                    {isThinking ? <Loader2 size={36} className="animate-spin" />
-                      : isListening ? <MicOff size={36} />
-                      : <Mic size={36} />}
+                    {isThinking ? (
+                      <Loader2 size={36} className="animate-spin" />
+                    ) : isListening ? (
+                      <MicOff size={36} />
+                    ) : (
+                      <Mic size={36} />
+                    )}
                   </button>
                   <p className="text-xs text-gray-400">
-                    {isListening ? (language === 'vi' ? '🔴 Nhả để gửi' : '🔴 Release to send')
-                      : isThinking ? (language === 'vi' ? 'AI đang trả lời...' : 'AI thinking...')
-                      : (language === 'vi' ? 'Giữ để nói' : 'Hold to speak')}
+                    {isListening
+                      ? language === 'vi'
+                        ? '🔴 Nhả để gửi'
+                        : '🔴 Release to send'
+                      : isThinking
+                      ? language === 'vi'
+                        ? 'AI đang trả lời...'
+                        : 'AI thinking...'
+                      : language === 'vi'
+                      ? 'Giữ để nói'
+                      : 'Hold to speak'}
                   </p>
                 </div>
               ) : (
@@ -508,33 +621,46 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                     className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 ${
                       freeTalkActive
                         ? 'bg-gradient-to-br from-green-400 to-emerald-500 text-white'
-                        : isThinking ? 'bg-gray-200 text-gray-400'
+                        : isThinking
+                        ? 'bg-gray-200 text-gray-400'
                         : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white'
                     }`}
                   >
                     {isThinking ? (
                       <Loader2 size={36} className="animate-spin" />
                     ) : freeTalkActive ? (
-                      isListening
-                        ? <Mic size={36} className="animate-pulse" />
-                        : <Radio size={36} className="animate-pulse" />
+                      isListening ? (
+                        <Mic size={36} className="animate-pulse" />
+                      ) : (
+                        <Radio size={36} className="animate-pulse" />
+                      )
                     ) : (
                       <Radio size={36} />
                     )}
                   </button>
+
                   <p className="text-xs text-center font-medium">
                     {isThinking ? (
-                      <span className="text-gray-400">{language === 'vi' ? 'AI đang trả lời...' : 'AI thinking...'}</span>
+                      <span className="text-gray-400">
+                        {language === 'vi' ? 'AI đang trả lời...' : 'AI thinking...'}
+                      </span>
                     ) : freeTalkActive ? (
                       <span className="text-green-600">
                         {isListening
-                          ? (language === 'vi' ? '🔴 Đang nghe... (dừng 2s để gửi)' : '🔴 Listening... (pause 2s to send)')
-                          : (language === 'vi' ? '⏳ Chờ bạn nói...' : '⏳ Waiting for you...')}
+                          ? language === 'vi'
+                            ? '🔴 Đang nghe... (dừng 2s để gửi)'
+                            : '🔴 Listening... (pause 2s to send)'
+                          : language === 'vi'
+                          ? '⏳ Chờ bạn nói...'
+                          : '⏳ Waiting for you...'}
                       </span>
                     ) : (
-                      <span className="text-gray-400">{language === 'vi' ? 'Bấm để bắt đầu trò chuyện' : 'Tap to start talking'}</span>
+                      <span className="text-gray-400">
+                        {language === 'vi' ? 'Bấm để bắt đầu trò chuyện' : 'Tap to start talking'}
+                      </span>
                     )}
                   </p>
+
                   {freeTalkActive && (
                     <p className="text-xs text-gray-400">
                       {language === 'vi' ? 'Bấm lại để dừng' : 'Tap again to stop'}
@@ -543,7 +669,6 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                 </div>
               )}
             </div>
-
           </div>
         </div>
       )}
