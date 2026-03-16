@@ -295,8 +295,8 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     <>
       {!isOpen && (
         <button onClick={() => setIsOpen(true)}
-          className="absolute bottom-36 right-4 z-[1001] w-14 h-14 bg-gradient-to-br from-purple-500 to-pink-500 text-white rounded-full shadow-xl flex items-center justify-center hover:scale-110 transition-transform active:scale-95">
-          <Mic size={26} />
+          className="absolute bottom-36 right-3 z-[1001] w-20 h-20 bg-gradient-to-br from-purple-500 to-pink-500 text-white rounded-full shadow-xl flex items-center justify-center hover:scale-110 transition-transform active:scale-95">
+          <Mic size={32} />
         </button>
       )}
 
@@ -373,14 +373,14 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                 onPointerLeave={useSTT === 'webspeech' ? stopListening : undefined}
                 onClick={useSTT === 'whisper' && isListening ? stopListening : undefined}
                 disabled={isDisabled}
-                className={`w-16 h-16 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 select-none touch-none ${
+                className={`w-20 h-20 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 select-none touch-none ${
                   isListening ? 'bg-red-500 text-white scale-110 animate-pulse'
                   : isDisabled ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                   : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white hover:scale-105'
                 }`}>
-                {isDisabled ? <Loader2 size={28} className="animate-spin" />
-                  : isListening ? <MicOff size={28} />
-                  : <Mic size={28} />}
+                {isDisabled ? <Loader2 size={32} className="animate-spin" />
+                  : isListening ? <MicOff size={32} />
+                  : <Mic size={32} />}
               </button>
               <p className="text-xs text-gray-400 text-center mt-1">
                 {isTranscribing ? (language === 'vi' ? '⏳ Đang xử lý giọng nói...' : '⏳ Processing...')
