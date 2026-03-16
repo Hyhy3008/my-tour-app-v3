@@ -113,12 +113,14 @@ export default function Home() {
   const languageRef = useRef(language);
   const memoryRef = useRef(memory);
   const selectedCityRef = useRef<CityType>(selectedCity);
+  const isTrackingStateRef = useRef(isTracking);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
   useEffect(() => { languageRef.current = language; }, [language]);
   useEffect(() => { memoryRef.current = memory; }, [memory]);
   useEffect(() => { selectedCityRef.current = selectedCity; }, [selectedCity]);
+  useEffect(() => { isTrackingStateRef.current = isTracking; }, [isTracking]);
 
   const t = translations[language];
 
@@ -140,7 +142,7 @@ export default function Home() {
       const cityKey = getMemoryKey(city);
       const raw = localStorage.getItem(cityKey);
 
-      // format mới: { expiresAt, data }
+      // Format mới: { expiresAt, data }
       if (raw) {
         const parsed = JSON.parse(raw);
 
@@ -160,7 +162,7 @@ export default function Home() {
           return wrapped.data || emptyMemory();
         }
 
-        // format cũ: ConversationMemory thuần
+        // Format cũ: ConversationMemory thuần
         if (
           parsed &&
           typeof parsed === 'object' &&
@@ -174,7 +176,7 @@ export default function Home() {
         }
       }
 
-      // migrate key cũ global nếu có
+      // Migrate key cũ global nếu có
       const legacyRaw = localStorage.getItem(LEGACY_MEMORY_KEY);
       if (legacyRaw) {
         const parsedLegacy = JSON.parse(legacyRaw);
@@ -213,22 +215,29 @@ export default function Home() {
     loadMemoryForCity(selectedCity);
   }, [loadMemoryForCity, selectedCity]);
 
-  // Check permissions
+  // =========================
+  // CHECK PERMISSIONS
+  // =========================
   useEffect(() => {
     if (!('permissions' in navigator)) return;
+
     navigator.permissions.query({ name: 'geolocation' }).then(r => {
       setGpsOk(r.state === 'granted');
       r.onchange = () => setGpsOk(r.state === 'granted');
     }).catch(() => {});
+
     navigator.permissions.query({ name: 'microphone' as PermissionName }).then(r => {
       setMicOk(r.state === 'granted');
       r.onchange = () => setMicOk(r.state === 'granted');
     }).catch(() => {});
   }, []);
 
-  // Warm up GPS
+  // =========================
+  // WARM UP GPS
+  // =========================
   useEffect(() => {
     if (!('geolocation' in navigator)) return;
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setGpsOk(true);
@@ -241,9 +250,13 @@ export default function Home() {
     );
   }, []);
 
-  // Service worker
+  // =========================
+  // SERVICE WORKER
+  // =========================
   useEffect(() => {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
   }, []);
 
   const requestGPS = () => {
@@ -257,9 +270,11 @@ export default function Home() {
       (err) => {
         setGpsOk(false);
         if (err.code === 1) {
-          alert(language === 'vi'
-            ? 'GPS bị từ chối. Vào Cài đặt → Chrome/Safari → Vị trí → Cho phép'
-            : 'GPS denied. Go to Settings → Chrome/Safari → Location → Allow');
+          alert(
+            language === 'vi'
+              ? 'GPS bị từ chối. Vào Cài đặt → Chrome/Safari → Vị trí → Cho phép'
+              : 'GPS denied. Go to Settings → Chrome/Safari → Location → Allow'
+          );
         }
       },
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 }
@@ -278,6 +293,7 @@ export default function Home() {
 
   const speakText = useCallback(async (text: string) => {
     if (isMutedRef.current) return;
+
     try {
       if (audioRef.current) {
         audioRef.current.pause();
@@ -313,9 +329,13 @@ export default function Home() {
     }
   }, []);
 
-  // ✅ Đổi city: reset UI nhưng KHÔNG xóa memory
+  // =========================
+  // ĐỔI CITY:
+  // reset UI, stop tracking/audio
+  // nhưng KHÔNG xóa memory
+  // =========================
   useEffect(() => {
-    if (isTracking) {
+    if (isTrackingStateRef.current) {
       setIsTracking(false);
       window.dispatchEvent(new CustomEvent('stop-tracking'));
     }
@@ -332,15 +352,23 @@ export default function Home() {
     }
 
     loadMemoryForCity(selectedCity);
-  }, [selectedCity, isTracking, loadMemoryForCity]);
+  }, [selectedCity, loadMemoryForCity]);
 
   const addMessage = useCallback((msg: string, isAi: boolean) => {
-    const time = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-    setMessages(prev => [...prev, { role: isAi ? 'ai' : 'system', content: msg, time }]);
+    const time = new Date().toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    setMessages(prev => [
+      ...prev,
+      { role: isAi ? 'ai' : 'system', content: msg, time }
+    ]);
   }, []);
 
   const fetchAI = useCallback(async (prompt: string, locationId?: string | null) => {
     const lang = languageRef.current;
+
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -357,7 +385,10 @@ export default function Home() {
         const data = await res.json();
         addMessage(data.reply, true);
         speakText(data.reply);
-        if (data.memoryUpdate) saveMemory(data.memoryUpdate);
+
+        if (data.memoryUpdate) {
+          saveMemory(data.memoryUpdate);
+        }
       } else {
         addMessage(translations[lang].loadError, false);
       }
@@ -687,8 +718,9 @@ export default function Home() {
               {messages.map((m, i) => (
                 <div key={i} className={`flex ${m.role === 'ai' ? 'justify-start' : 'justify-center'}`}>
                   <div className={`max-w-[90%] p-3 rounded-2xl text-sm ${
-                    m.role === 'ai' ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100'
-                    : 'bg-gray-100 text-gray-500 text-xs'
+                    m.role === 'ai'
+                      ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100'
+                      : 'bg-gray-100 text-gray-500 text-xs'
                   }`}>
                     <p className="whitespace-pre-wrap leading-relaxed">{m.content}</p>
                     {m.role === 'ai' && <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>}
@@ -702,16 +734,16 @@ export default function Home() {
         </>
       )}
 
-      {activeTab === 'shop' && (
-        <ShopTab selectedCity={selectedCity} language={language} />
-      )}
+      {activeTab === 'shop' && <ShopTab selectedCity={selectedCity} language={language} />}
 
       {/* Bottom Tab Bar */}
       <div className="bg-white border-t border-gray-200 z-[1002]">
         <div className="flex justify-around items-center py-2 px-4 max-w-md mx-auto">
           <button
             onClick={() => setActiveTab('tour')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
+              activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'
+            }`}
           >
             <Map size={24} />
             <span className="text-xs mt-1 font-medium">{t.tour}</span>
@@ -719,7 +751,9 @@ export default function Home() {
 
           <button
             onClick={() => setActiveTab('shop')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
+              activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'
+            }`}
           >
             <ShoppingBag size={24} />
             <span className="text-xs mt-1 font-medium">{t.shop}</span>
