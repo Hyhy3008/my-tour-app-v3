@@ -22,21 +22,27 @@ interface Message {
   content: string;
 }
 
+declare global {
+  interface Window {
+    SpeechRecognition: any;
+    webkitSpeechRecognition: any;
+  }
+}
+
 export default function VoiceChat({ language, isMuted, locationId, memory, onMemoryUpdate }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState('');
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const recognitionRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isMutedRef = useRef(isMuted);
   const languageRef = useRef(language);
   const locationIdRef = useRef(locationId);
+  const isStartedRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
@@ -95,101 +101,79 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     finally { setIsThinking(false); }
   }, [speakText, stopPageAudio, memory, onMemoryUpdate]);
 
-  // ✅ MediaRecorder - hoạt động trên iOS Chrome, iOS Safari, Android, Desktop
-  const startRecording = useCallback(async () => {
-    if (isThinking || isListening || isTranscribing) return;
+  const startListening = useCallback(() => {
+    if (isThinking || isListening) return;
     setError('');
     setTranscript('');
     stopPageAudio();
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      setError(language === 'vi'
+        ? '❌ Trình duyệt không hỗ trợ. Dùng Chrome hoặc Safari!'
+        : '❌ Browser not supported. Use Chrome or Safari!');
+      return;
+    }
 
-      // Chọn format tốt nhất cho từng browser
-      const mimeType =
-        MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' :
-        MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' :
-        MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : // iOS Safari
-        '';
+    const recognition = new SR();
+    recognition.lang = languageRef.current === 'vi' ? 'vi-VN' : 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    recognitionRef.current = recognition;
+    isStartedRef.current = false;
 
-      const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
+    recognition.onstart = () => { isStartedRef.current = true; setIsListening(true); };
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        setIsListening(false);
-        setIsTranscribing(true);
-
-        const audioBlob = new Blob(audioChunksRef.current, {
-          type: mimeType || 'audio/webm'
-        });
-
-        try {
-          const formData = new FormData();
-          formData.append('audio', audioBlob, 'recording.webm');
-          formData.append('language', languageRef.current);
-
-          const res = await fetch('/api/transcribe', {
-            method: 'POST',
-            body: formData,
-          });
-
-          if (res.ok) {
-            const data = await res.json();
-            const text = data.text?.trim();
-            if (text) {
-              setTranscript(text);
-              await askAI(text);
-            } else {
-              setError(language === 'vi' ? 'Không nhận diện được. Thử lại!' : 'Could not recognize. Try again!');
-            }
-          } else {
-            const err = await res.json();
-            setError(err.error || 'Transcribe failed');
-          }
-        } catch (e: any) {
-          setError(e.message);
-        } finally {
-          setIsTranscribing(false);
-        }
-      };
-
-      mediaRecorder.start();
-      setIsListening(true);
-
-    } catch (e: any) {
-      if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-        setError(language === 'vi'
-          ? '❌ Cần cấp quyền Microphone!\nSettings → Chrome/Safari → Microphone → Allow'
-          : '❌ Microphone permission denied!\nSettings → Chrome/Safari → Microphone → Allow');
-      } else {
-        setError(`Mic error: ${e.message}`);
+    recognition.onresult = (event: any) => {
+      let interim = '', final = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) final += t; else interim += t;
       }
-    }
-  }, [isThinking, isListening, isTranscribing, askAI, stopPageAudio, language]);
+      setTranscript(final || interim);
+      if (final) {
+        isStartedRef.current = false;
+        setIsListening(false);
+        recognition.stop();
+        askAI(final.trim());
+      }
+    };
 
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current?.state === 'recording') {
-      mediaRecorderRef.current.stop();
-    }
+    recognition.onerror = (event: any) => {
+      isStartedRef.current = false;
+      setIsListening(false);
+      if (event.error === 'aborted') return;
+      if (event.error === 'not-allowed') {
+        setError(language === 'vi'
+          ? '❌ Cần cấp quyền Microphone!\nSettings → Chrome/Safari → Mic → Allow'
+          : '❌ Mic permission denied!\nSettings → Chrome/Safari → Mic → Allow');
+      } else if (event.error === 'no-speech') {
+        setError(language === 'vi' ? 'Không nghe thấy. Thử lại!' : 'No speech. Try again!');
+      } else {
+        setError(`Error: ${event.error}`);
+      }
+    };
+
+    recognition.onend = () => { isStartedRef.current = false; setIsListening(false); };
+    recognition.start();
+  }, [isThinking, isListening, askAI, stopPageAudio, language]);
+
+  const stopListening = useCallback(() => {
+    if (recognitionRef.current && isStartedRef.current) recognitionRef.current.stop();
+    setIsListening(false);
   }, []);
 
   const handleClose = () => {
-    stopRecording();
+    if (recognitionRef.current && isStartedRef.current) recognitionRef.current.stop();
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
     setIsOpen(false);
     setMessages([]);
     setTranscript('');
     setError('');
+    isStartedRef.current = false;
   };
-
-  const isDisabled = isThinking || isTranscribing;
 
   return (
     <>
@@ -228,7 +212,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
             <div className="h-40 overflow-y-auto px-4 py-3 space-y-2 bg-gray-50">
               {messages.length === 0 && (
                 <p className="text-gray-400 text-xs text-center pt-4">
-                  {language === 'vi' ? 'Hỏi tôi về địa điểm, ẩm thực...' : 'Ask me about locations, food...'}
+                  {language === 'vi' ? 'Giữ nút mic để nói...' : 'Hold mic button to speak...'}
                 </p>
               )}
               {messages.map((m, i) => (
@@ -238,14 +222,12 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                   }`}>{m.content}</div>
                 </div>
               ))}
-              {(isThinking || isTranscribing) && (
+              {isThinking && (
                 <div className="flex justify-start">
                   <div className="bg-white border border-gray-200 px-3 py-2 rounded-2xl flex items-center gap-2">
                     <Loader2 size={14} className="animate-spin text-purple-500" />
                     <span className="text-xs text-gray-500">
-                      {isTranscribing
-                        ? (language === 'vi' ? 'Đang nhận diện...' : 'Transcribing...')
-                        : (language === 'vi' ? 'Đang suy nghĩ...' : 'Thinking...')}
+                      {language === 'vi' ? 'Đang suy nghĩ...' : 'Thinking...'}
                     </span>
                   </div>
                 </div>
@@ -258,7 +240,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
               <div className="px-4 py-2 bg-purple-50 border-t border-purple-100">
                 <p className="text-xs text-purple-600 flex items-center gap-1">
                   {isListening && <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse inline-block" />}
-                  {transcript || (language === 'vi' ? 'Đang ghi âm...' : 'Recording...')}
+                  {transcript || (language === 'vi' ? 'Đang nghe...' : 'Listening...')}
                 </p>
               </div>
             )}
@@ -273,24 +255,26 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
             {/* Mic Button */}
             <div className="px-4 py-3 flex flex-col items-center gap-1 border-t border-gray-100 bg-white">
               <button
-                onPointerDown={!isListening ? startRecording : undefined}
-                onClick={isListening ? stopRecording : undefined}
-                disabled={isDisabled}
+                onPointerDown={startListening}
+                onPointerUp={stopListening}
+                onPointerLeave={stopListening}
+                disabled={isThinking}
                 className={`w-20 h-20 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 select-none touch-none ${
                   isListening ? 'bg-red-500 text-white scale-110 animate-pulse'
-                  : isDisabled ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  : isThinking ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                   : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white hover:scale-105'
                 }`}
               >
-                {isDisabled ? <Loader2 size={32} className="animate-spin" />
+                {isThinking ? <Loader2 size={32} className="animate-spin" />
                   : isListening ? <MicOff size={32} />
                   : <Mic size={32} />}
               </button>
               <p className="text-xs text-gray-400 text-center mt-1">
-                {isTranscribing ? (language === 'vi' ? '⏳ Đang xử lý...' : '⏳ Processing...')
-                  : isListening ? (language === 'vi' ? '🔴 Đang ghi... bấm để dừng' : '🔴 Recording... tap to stop')
-                  : isThinking ? (language === 'vi' ? 'AI đang trả lời...' : 'AI thinking...')
-                  : (language === 'vi' ? 'Bấm để ghi âm' : 'Tap to record')}
+                {isListening
+                  ? (language === 'vi' ? '🔴 Đang nghe... nhả để gửi' : '🔴 Listening... release to send')
+                  : isThinking
+                    ? (language === 'vi' ? 'AI đang trả lời...' : 'AI thinking...')
+                    : (language === 'vi' ? 'Giữ để nói' : 'Hold to speak')}
               </p>
             </div>
           </div>
