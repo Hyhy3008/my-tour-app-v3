@@ -101,6 +101,8 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     finally { setIsThinking(false); }
   }, [speakText, stopPageAudio, memory, onMemoryUpdate]);
 
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   const startListening = useCallback(() => {
     if (isThinking || isListening) return;
     setError('');
@@ -124,6 +126,8 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     recognitionRef.current = recognition;
     isStartedRef.current = false;
 
+    let lastInterim = '';
+
     recognition.onstart = () => { isStartedRef.current = true; setIsListening(true); };
 
     recognition.onresult = (event: any) => {
@@ -133,11 +137,29 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
         if (event.results[i].isFinal) final += t; else interim += t;
       }
       setTranscript(final || interim);
+
+      // ✅ Gửi ngay khi có final result
       if (final) {
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         isStartedRef.current = false;
         setIsListening(false);
         recognition.stop();
         askAI(final.trim());
+        return;
+      }
+
+      // ✅ Gửi interim sau 1.5s im lặng - không cần chờ isFinal
+      if (interim && interim !== lastInterim) {
+        lastInterim = interim;
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = setTimeout(() => {
+          if (isStartedRef.current && interim.trim().length > 1) {
+            isStartedRef.current = false;
+            setIsListening(false);
+            recognition.stop();
+            askAI(interim.trim());
+          }
+        }, 1500);
       }
     };
 
@@ -161,11 +183,13 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
   }, [isThinking, isListening, askAI, stopPageAudio, language]);
 
   const stopListening = useCallback(() => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     if (recognitionRef.current && isStartedRef.current) recognitionRef.current.stop();
     setIsListening(false);
   }, []);
 
   const handleClose = () => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     if (recognitionRef.current && isStartedRef.current) recognitionRef.current.stop();
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
     setIsOpen(false);
@@ -181,9 +205,10 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          className="absolute bottom-36 right-3 z-[1001] w-20 h-20 bg-gradient-to-br from-purple-500 to-pink-500 text-white rounded-full shadow-xl flex items-center justify-center hover:scale-110 transition-transform active:scale-95"
+          className="absolute bottom-36 right-3 z-[1001] w-24 h-24 bg-gradient-to-br from-purple-500 to-pink-500 text-white rounded-full shadow-2xl flex flex-col items-center justify-center gap-1 hover:scale-110 transition-transform active:scale-95"
         >
-          <Mic size={32} />
+          <Mic size={36} />
+          <span className="text-[10px] font-medium opacity-90">AI Chat</span>
         </button>
       )}
 
@@ -259,15 +284,15 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                 onPointerUp={stopListening}
                 onPointerLeave={stopListening}
                 disabled={isThinking}
-                className={`w-20 h-20 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 select-none touch-none ${
+                className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 select-none touch-none ${
                   isListening ? 'bg-red-500 text-white scale-110 animate-pulse'
                   : isThinking ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                   : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white hover:scale-105'
                 }`}
               >
-                {isThinking ? <Loader2 size={32} className="animate-spin" />
-                  : isListening ? <MicOff size={32} />
-                  : <Mic size={32} />}
+                {isThinking ? <Loader2 size={36} className="animate-spin" />
+                  : isListening ? <MicOff size={36} />
+                  : <Mic size={36} />}
               </button>
               <p className="text-xs text-gray-400 text-center mt-1">
                 {isListening
