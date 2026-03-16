@@ -120,10 +120,25 @@ export default function Home() {
   }, []);
 
   const requestGPS = () => {
+    // iOS không có permissions.query → gọi thẳng getCurrentPosition để trigger popup xin quyền
     navigator.geolocation.getCurrentPosition(
-      () => setGpsOk(true),
-      () => setGpsOk(false),
-      { timeout: 5000 }
+      (pos) => {
+        setGpsOk(true);
+        // Cập nhật shared position luôn
+        window.dispatchEvent(new CustomEvent('gps-warmed', {
+          detail: { lat: pos.coords.latitude, lng: pos.coords.longitude }
+        }));
+      },
+      (err) => {
+        setGpsOk(false);
+        if (err.code === 1) {
+          // Permission denied → hướng dẫn vào Settings
+          alert(language === 'vi'
+            ? 'GPS bị từ chối. Vào Cài đặt → Chrome/Safari → Vị trí → Cho phép'
+            : 'GPS denied. Go to Settings → Chrome/Safari → Location → Allow');
+        }
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 }
     );
   };
 
@@ -247,32 +262,13 @@ export default function Home() {
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages.length]);
 
-  // Icon helper
-  const permIcon = (ok: boolean | null, onPress: () => void, type: 'gps' | 'mic') => (
-    <button onClick={onPress}
-      title={ok ? (type === 'gps' ? 'GPS OK' : 'Mic OK') : (type === 'gps' ? 'Cấp quyền GPS' : 'Cấp quyền Mic')}
-      className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all active:scale-95 shrink-0 ${
-        ok === true ? 'bg-green-100 text-green-600'
-        : ok === false ? 'bg-red-100 text-red-500 animate-pulse'
-        : 'bg-gray-100 text-gray-400'
-      }`}>
-      {type === 'gps' ? (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-          <circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
-        </svg>
-      ) : (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-          <rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3M9 22h6"/>
-        </svg>
-      )}
-    </button>
-  );
+  // Permission buttons moved inline to header
 
   return (
     <div className="flex flex-col h-[100dvh] bg-gray-100 overflow-hidden relative">
 
       {/* Language Selector */}
-      <div className="absolute top-4 right-4 z-[1002]">
+      <div className="absolute top-4 right-4 z-[1003]">
         <button onClick={() => setShowLangMenu(!showLangMenu)}
           className="bg-white/95 backdrop-blur-md shadow-lg rounded-full p-2 flex items-center gap-1">
           <Globe size={18} className="text-gray-600" />
@@ -295,22 +291,20 @@ export default function Home() {
       {activeTab === 'tour' && (
         <>
           {/* Header + City Selector */}
-          <div className="absolute top-0 left-0 right-20 z-[1000] p-3">
+          <div className="absolute top-0 left-0 right-0 z-[1000] p-3">
             <div className="bg-white/95 backdrop-blur-md shadow-lg rounded-2xl p-3">
+
               {/* Row 1: Logo + Status + Buttons */}
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-2">
-                  <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
-                    <MapPin className="text-white" size={18} />
+                  <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shrink-0">
+                    <MapPin className="text-white" size={20} />
                   </div>
                   <div>
-                    <div className="flex items-center gap-1.5">
-                      <h1 className="font-bold text-gray-800 text-sm">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <h1 className="font-bold text-gray-800">
                         {selectedCity === 'ninh-binh' ? 'Ninh Bình' : 'Hà Nội'} Tour
                       </h1>
-                      <span className="text-xs bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
-                        <CheckCircle size={10} /> {language.toUpperCase()}
-                      </span>
                       {memory.messageCount > 0 && (
                         <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full">
                           💬 {memory.messageCount}
@@ -318,59 +312,83 @@ export default function Home() {
                       )}
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <span className={`w-1.5 h-1.5 rounded-full ${isTracking ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
+                      <span className={`w-2 h-2 rounded-full ${isTracking ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
                       <p className={`text-xs ${isTracking ? 'text-green-600' : 'text-gray-400'}`}>
                         {isTracking ? t.tracking : t.waiting}
                       </p>
                       {visitedCount > 0 && (
-                        <span className="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full">
+                        <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
                           {visitedCount} {t.points}
                         </span>
                       )}
                     </div>
                   </div>
                 </div>
-                <div className="flex gap-1.5">
-                  <button onClick={toggleMute}
-                    className={`p-2.5 rounded-full transition-colors ${isMuted ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-600'}`}>
-                    {isMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
+
+                {/* Buttons to hơn */}
+                <div className="flex gap-2 items-center">
+                  {/* GPS permission button */}
+                  <button
+                    onClick={requestGPS}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-all active:scale-95 ${
+                      gpsOk === true ? 'bg-green-100 text-green-600'
+                      : gpsOk === false ? 'bg-red-100 text-red-500 animate-pulse'
+                      : 'bg-gray-100 text-gray-400'
+                    }`}
+                    title={gpsOk === true ? 'GPS OK' : language === 'vi' ? 'Bấm cấp quyền GPS' : 'Tap to allow GPS'}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+                      <circle cx="12" cy="12" r="8" strokeDasharray="2 2"/>
+                    </svg>
                   </button>
+
+                  {/* Mic permission button */}
+                  <button
+                    onClick={requestMic}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-all active:scale-95 ${
+                      micOk === true ? 'bg-green-100 text-green-600'
+                      : micOk === false ? 'bg-red-100 text-red-500 animate-pulse'
+                      : 'bg-gray-100 text-gray-400'
+                    }`}
+                    title={micOk === true ? 'Mic OK' : language === 'vi' ? 'Bấm cấp quyền Mic' : 'Tap to allow Mic'}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="9" y="2" width="6" height="11" rx="3"/>
+                      <path d="M5 10a7 7 0 0 0 14 0M12 19v3M9 22h6"/>
+                    </svg>
+                  </button>
+
+                  <button onClick={toggleMute}
+                    className={`w-10 h-10 rounded-full transition-colors ${isMuted ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-600'}`}>
+                    {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+                  </button>
+
                   <button onClick={handleStartTour}
-                    className={`p-2.5 rounded-full shadow-lg transition-all ${
+                    className={`w-12 h-12 rounded-full shadow-lg transition-all active:scale-95 flex items-center justify-center ${
                       isTracking ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white'
                       : 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'
                     }`}>
-                    <Navigation size={20} className={isTracking ? 'animate-pulse' : ''} />
+                    <Navigation size={22} className={isTracking ? 'animate-pulse' : ''} />
                   </button>
                 </div>
               </div>
 
-              {/* Row 2: City selector */}
-              <div className="flex gap-1.5 mt-2">
+              {/* Row 2: City selector - to hơn */}
+              <div className="flex gap-2 mt-3">
                 <button onClick={() => setSelectedCity('ninh-binh')}
-                  className={`flex-1 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
                     selectedCity === 'ninh-binh' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'
                   }`}>
                   🏞️ Ninh Bình
                 </button>
                 <button onClick={() => setSelectedCity('hanoi')}
-                  className={`flex-1 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
                     selectedCity === 'hanoi' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'
                   }`}>
                   🏛️ Hà Nội
                 </button>
               </div>
-
-              {/* Row 3: GPS + Mic permission - chỉ hiện khi chưa cấp quyền */}
-              {(gpsOk !== true || micOk !== true) && (
-                <div className="flex gap-2 mt-2 items-center">
-                  <span className="text-xs text-gray-400 flex-1">
-                    {language === 'vi' ? 'Bấm để cấp quyền:' : 'Tap to allow:'}
-                  </span>
-                  {gpsOk !== true && permIcon(gpsOk, requestGPS, 'gps')}
-                  {micOk !== true && permIcon(micOk, requestMic, 'mic')}
-                </div>
-              )}
             </div>
           </div>
 
