@@ -54,6 +54,7 @@ export default function Home() {
   const [selectedCity, setSelectedCity] = useState<CityType>('ninh-binh');
   const [language, setLanguage] = useState<Language>('vi');
   const [showLangMenu, setShowLangMenu] = useState(false);
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const [isTracking, setIsTracking] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -273,14 +274,12 @@ export default function Home() {
           <div className="absolute top-0 left-0 right-0 z-[1000] p-3">
             <div className="bg-white/95 backdrop-blur-md shadow-lg rounded-2xl overflow-hidden">
 
-              {/* Row 1: Logo + Title + Start button */}
-              <div className="flex items-center gap-3 px-4 pt-3 pb-2">
-                {/* Logo */}
+              {/* Row 1: luôn hiện - Logo + Title + Start + Collapse */}
+              <div className="flex items-center gap-3 px-4 pt-3 pb-3">
                 <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shrink-0">
                   <MapPin className="text-white" size={22} />
                 </div>
 
-                {/* Title + status */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <h1 className="font-bold text-gray-800 text-base leading-tight">
@@ -301,94 +300,104 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Start/Stop tour - nút chính to nhất */}
-                <button
-                  onClick={handleStartTour}
+                {/* Start tour */}
+                <button onClick={handleStartTour}
                   className={`w-14 h-14 rounded-2xl shadow-lg transition-all active:scale-95 flex items-center justify-center shrink-0 ${
                     isTracking
                       ? 'bg-gradient-to-br from-red-500 to-pink-500 text-white'
                       : 'bg-gradient-to-br from-blue-500 to-cyan-500 text-white'
-                  }`}
-                >
+                  }`}>
                   <Navigation size={26} className={isTracking ? 'animate-pulse' : ''} />
                 </button>
-              </div>
 
-              {/* Row 2: City selector */}
-              <div className="flex gap-2 px-4 pb-2">
-                <button onClick={() => setSelectedCity('ninh-binh')}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-98 ${
-                    selectedCity === 'ninh-binh' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'
-                  }`}>
-                  🏞️ Ninh Bình
-                </button>
-                <button onClick={() => setSelectedCity('hanoi')}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-98 ${
-                    selectedCity === 'hanoi' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'
-                  }`}>
-                  🏛️ Hà Nội
+                {/* Toggle collapse */}
+                <button
+                  onClick={() => setHeaderCollapsed(p => !p)}
+                  className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center shrink-0 active:scale-95 transition-all"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                    style={{ transform: headerCollapsed ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                    <path d="M18 15l-6-6-6 6"/>
+                  </svg>
                 </button>
               </div>
 
-              {/* Row 3: Utility buttons - nhỏ gọn cuối cùng */}
-              <div className="flex items-center gap-2 px-4 pb-3 border-t border-gray-100 pt-2">
-                {/* GPS */}
-                <button onClick={requestGPS}
-                  className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium transition-all active:scale-95 ${
-                    gpsOk === true ? 'bg-green-50 text-green-600'
-                    : gpsOk === false ? 'bg-red-50 text-red-500 animate-pulse'
-                    : 'bg-gray-100 text-gray-500'
-                  }`}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
-                  </svg>
-                  GPS {gpsOk === true ? '✓' : gpsOk === false ? '✗' : '?'}
-                </button>
+              {/* Expandable rows - ẩn khi collapsed */}
+              {!headerCollapsed && (
+                <>
+                  {/* Row 2: City selector */}
+                  <div className="flex gap-2 px-4 pb-2">
+                    <button onClick={() => setSelectedCity('ninh-binh')}
+                      className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95 ${
+                        selectedCity === 'ninh-binh' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'
+                      }`}>
+                      🏞️ Ninh Bình
+                    </button>
+                    <button onClick={() => setSelectedCity('hanoi')}
+                      className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95 ${
+                        selectedCity === 'hanoi' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'
+                      }`}>
+                      🏛️ Hà Nội
+                    </button>
+                  </div>
 
-                {/* Mic permission */}
-                <button onClick={requestMic}
-                  className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium transition-all active:scale-95 ${
-                    micOk === true ? 'bg-green-50 text-green-600'
-                    : micOk === false ? 'bg-red-50 text-red-500 animate-pulse'
-                    : 'bg-gray-100 text-gray-500'
-                  }`}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <rect x="9" y="2" width="6" height="11" rx="3"/>
-                    <path d="M5 10a7 7 0 0 0 14 0M12 19v3M9 22h6"/>
-                  </svg>
-                  Mic {micOk === true ? '✓' : micOk === false ? '✗' : '?'}
-                </button>
+                  {/* Row 3: GPS, Mic, Sound, Language */}
+                  <div className="flex items-center gap-2 px-4 pb-3 border-t border-gray-100 pt-2">
+                    <button onClick={requestGPS}
+                      className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium transition-all active:scale-95 ${
+                        gpsOk === true ? 'bg-green-50 text-green-600'
+                        : gpsOk === false ? 'bg-red-50 text-red-500 animate-pulse'
+                        : 'bg-gray-100 text-gray-500'
+                      }`}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+                      </svg>
+                      GPS {gpsOk === true ? '✓' : gpsOk === false ? '✗' : '?'}
+                    </button>
 
-                {/* Mute */}
-                <button onClick={toggleMute}
-                  className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium transition-all active:scale-95 ${
-                    isMuted ? 'bg-red-50 text-red-500' : 'bg-gray-100 text-gray-500'
-                  }`}>
-                  {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-                  {isMuted ? (language === 'vi' ? 'Tắt' : 'Muted') : (language === 'vi' ? 'Âm thanh' : 'Sound')}
-                </button>
+                    <button onClick={requestMic}
+                      className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium transition-all active:scale-95 ${
+                        micOk === true ? 'bg-green-50 text-green-600'
+                        : micOk === false ? 'bg-red-50 text-red-500 animate-pulse'
+                        : 'bg-gray-100 text-gray-500'
+                      }`}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <rect x="9" y="2" width="6" height="11" rx="3"/>
+                        <path d="M5 10a7 7 0 0 0 14 0M12 19v3M9 22h6"/>
+                      </svg>
+                      Mic {micOk === true ? '✓' : micOk === false ? '✗' : '?'}
+                    </button>
 
-                {/* Language */}
-                <div className="relative">
-                  <button onClick={() => setShowLangMenu(!showLangMenu)}
-                    className="flex-1 h-10 px-3 rounded-xl bg-gray-100 text-gray-500 flex items-center gap-1 text-xs font-medium active:scale-95 transition-all">
-                    <Globe size={14} />
-                    {language.toUpperCase()}
-                  </button>
-                  {showLangMenu && (
-                    <div className="absolute right-0 bottom-12 bg-white rounded-xl shadow-xl overflow-hidden z-10 w-36">
-                      <button onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
-                        className={`w-full px-4 py-3 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}>
-                        🇻🇳 Tiếng Việt
+                    <button onClick={toggleMute}
+                      className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium transition-all active:scale-95 ${
+                        isMuted ? 'bg-red-50 text-red-500' : 'bg-gray-100 text-gray-500'
+                      }`}>
+                      {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                      {isMuted ? (language === 'vi' ? 'Tắt' : 'Muted') : (language === 'vi' ? 'Âm thanh' : 'Sound')}
+                    </button>
+
+                    <div className="relative">
+                      <button onClick={() => setShowLangMenu(!showLangMenu)}
+                        className="h-10 px-3 rounded-xl bg-gray-100 text-gray-500 flex items-center gap-1 text-xs font-medium active:scale-95 transition-all">
+                        <Globe size={14} />
+                        {language.toUpperCase()}
                       </button>
-                      <button onClick={() => { setLanguage('en'); setShowLangMenu(false); }}
-                        className={`w-full px-4 py-3 text-left text-sm ${language === 'en' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}>
-                        🇬🇧 English
-                      </button>
+                      {showLangMenu && (
+                        <div className="absolute right-0 bottom-12 bg-white rounded-xl shadow-xl overflow-hidden z-10 w-36">
+                          <button onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
+                            className={`w-full px-4 py-3 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}>
+                            🇻🇳 Tiếng Việt
+                          </button>
+                          <button onClick={() => { setLanguage('en'); setShowLangMenu(false); }}
+                            className={`w-full px-4 py-3 text-left text-sm ${language === 'en' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}>
+                            🇬🇧 English
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
