@@ -8,6 +8,16 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 // ✅ Share vị trí GPS - tránh gọi getCurrentPosition thêm lần nữa khi routing
 const sharedPositionRef = { current: null as { lat: number; lng: number } | null };
 
+// Lắng nghe GPS warm up từ page.tsx
+if (typeof window !== 'undefined') {
+  window.addEventListener('gps-warmed', (e: any) => {
+    if (!sharedPositionRef.current) {
+      sharedPositionRef.current = e.detail;
+      console.log('SharedPosition set from warm up');
+    }
+  });
+}
+
 // Icons - GIỮ NGUYÊN
 const userIcon = L.icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
