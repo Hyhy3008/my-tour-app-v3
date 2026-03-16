@@ -225,11 +225,27 @@ export default function Home() {
 
   const handleStartTour = () => {
     if (!isTracking) {
-      navigator.geolocation.getCurrentPosition(
-        () => { setIsTracking(true); addMessage(t.startTour, false); },
-        (error) => { if (error.code === error.PERMISSION_DENIED) addMessage(t.gpsError, false); },
-        { enableHighAccuracy: false, timeout: 10000 }
-      );
+      // ✅ Set tracking ngay lập tức - không chờ GPS response
+      // GPSTracker trong MapContainer sẽ tự lấy vị trí
+      // Chỉ kiểm tra permission trước
+      if (!('geolocation' in navigator)) {
+        addMessage(t.gpsError, false);
+        return;
+      }
+      // Kiểm tra permission nhanh
+      navigator.permissions?.query({ name: 'geolocation' }).then(result => {
+        if (result.state === 'denied') {
+          addMessage(t.gpsError, false);
+          return;
+        }
+        // Granted hoặc prompt → start ngay
+        setIsTracking(true);
+        addMessage(t.startTour, false);
+      }).catch(() => {
+        // Không support permissions API (iOS) → start luôn
+        setIsTracking(true);
+        addMessage(t.startTour, false);
+      });
     } else {
       setIsTracking(false);
       setNavigatingTo(null);
@@ -257,6 +273,24 @@ export default function Home() {
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages.length]);
   useEffect(() => {
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }, []);
+
+  // ✅ Warm up GPS ngay khi load - để lần bấm Start không phải chờ
+  // GPS chip cần thời gian khởi động, warm up trước giúp bấm nút là định vị ngay
+  useEffect(() => {
+    if (!('geolocation' in navigator)) return;
+    // Silent warm up - chỉ để GPS chip hoạt động, không làm gì với kết quả
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        // Lưu vào sharedPositionRef của MapContainer qua event
+        window.dispatchEvent(new CustomEvent('gps-warmed', {
+          detail: { lat: pos.coords.latitude, lng: pos.coords.longitude }
+        }));
+        console.log('GPS warmed up:', pos.coords.accuracy.toFixed(0) + 'm accuracy');
+      },
+      () => { /* ignore error - chỉ warm up */ },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+    );
   }, []);
 
   return (
