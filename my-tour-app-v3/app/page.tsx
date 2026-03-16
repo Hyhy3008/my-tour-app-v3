@@ -355,23 +355,20 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Route Banner */}
-          {navigatingTo && routeInfo && (
-            <div className="absolute top-32 left-0 right-0 z-[999] px-3">
-              <div className="bg-blue-500/95 backdrop-blur text-white rounded-2xl p-3 max-w-sm mx-auto shadow-lg">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs opacity-80">{t.navigatingTo}</p>
-                    <p className="font-bold">{navigatingTo}</p>
-                    <div className="flex gap-3 mt-1 text-sm">
-                      <span>📏 {routeInfo.distance} {t.km}</span>
-                      <span>⏱️ {routeInfo.time} {t.min}</span>
-                    </div>
-                  </div>
-                  <button onClick={handleCancelNavigation} className="p-2 bg-white/20 hover:bg-white/30 rounded-lg">
-                    <X size={20} />
-                  </button>
-                </div>
+          {/* ✅ Mini route pill - nhỏ gọn, không che màn hình */}
+          {navigatingTo && (
+            <div className="absolute bottom-[30vh] left-1/2 -translate-x-1/2 z-[999] pointer-events-auto">
+              <div className="bg-blue-500/95 backdrop-blur text-white rounded-full px-4 py-2 shadow-lg flex items-center gap-3 whitespace-nowrap">
+                <span className="text-xs font-medium">🗺️ {navigatingTo}</span>
+                {routeInfo && (
+                  <>
+                    <span className="text-xs opacity-80">📏 {routeInfo.distance}{t.km}</span>
+                    <span className="text-xs opacity-80">⏱️ {routeInfo.time}{t.min}</span>
+                  </>
+                )}
+                <button onClick={handleCancelNavigation} className="ml-1 hover:opacity-70">
+                  <X size={14} />
+                </button>
               </div>
             </div>
           )}
