@@ -57,12 +57,6 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
   const ftSentRef = useRef(false);          // da gui lan nay chua — guard tuyet doi chong double-send
   const isPlayingRef = useRef(false);
 
-  // Web Audio interrupt detection
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const micStreamRef = useRef<MediaStream | null>(null);
-  const interruptRafRef = useRef<number | null>(null);
-
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
   useEffect(() => { languageRef.current = language; }, [language]);
   useEffect(() => { locationIdRef.current = locationId; }, [locationId]);
@@ -79,60 +73,6 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
     isPlayingRef.current = false;
   }, []);
-
-  // ── Web Audio interrupt: dung AudioContext analyser de phat hien tieng noi
-  // khi AI dang phat, khong can SpeechRecognition thu 2
-  const stopInterruptDetect = useCallback(() => {
-    if (interruptRafRef.current) { cancelAnimationFrame(interruptRafRef.current); interruptRafRef.current = null; }
-    if (micStreamRef.current) { micStreamRef.current.getTracks().forEach(t => t.stop()); micStreamRef.current = null; }
-    if (audioCtxRef.current) { try { audioCtxRef.current.close(); } catch {} audioCtxRef.current = null; }
-    analyserRef.current = null;
-  }, []);
-
-  const startInterruptDetect = useCallback((onInterrupt: () => void) => {
-    stopInterruptDetect();
-    navigator.mediaDevices?.getUserMedia({ audio: true }).then(stream => {
-      if (!isPlayingRef.current) { stream.getTracks().forEach(t => t.stop()); return; }
-      micStreamRef.current = stream;
-      const ctx = new AudioContext();
-      audioCtxRef.current = ctx;
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 512;
-      analyser.smoothingTimeConstant = 0.3;
-      source.connect(analyser);
-      analyserRef.current = analyser;
-      const data = new Uint8Array(analyser.frequencyBinCount);
-
-      // Cho 600ms dau de tranh nghe echo tu loa
-      let warmup = true;
-      setTimeout(() => { warmup = false; }, 600);
-
-      const THRESHOLD = 30; // nguong RMS phat hien tieng noi
-      let consecutiveFrames = 0;
-
-      const check = () => {
-        if (!isPlayingRef.current) { stopInterruptDetect(); return; }
-        analyser.getByteTimeDomainData(data);
-        // Tinh RMS
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) { const v = (data[i] - 128); sum += v * v; }
-        const rms = Math.sqrt(sum / data.length);
-        if (!warmup && rms > THRESHOLD) {
-          consecutiveFrames++;
-          if (consecutiveFrames >= 3) { // 3 frame lien tiep (~50ms) moi tinh la co noi
-            stopInterruptDetect();
-            onInterrupt();
-            return;
-          }
-        } else {
-          consecutiveFrames = 0;
-        }
-        interruptRafRef.current = requestAnimationFrame(check);
-      };
-      interruptRafRef.current = requestAnimationFrame(check);
-    }).catch(() => {}); // neu bi deny thi thoi, khong bat buoc
-  }, [stopInterruptDetect]);
 
   const speakText = useCallback(async (text: string, onDone?: () => void) => {
     if (isMutedRef.current) { onDone?.(); return; }
@@ -154,14 +94,13 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
         URL.revokeObjectURL(url);
         audioRef.current = null;
         isPlayingRef.current = false;
-        stopInterruptDetect();
       };
 
       audio.onended = () => { cleanup(); onDone?.(); };
       audio.onerror = () => { cleanup(); onDone?.(); };
       await audio.play();
     } catch { onDone?.(); }
-  }, [stopAudio, stopInterruptDetect]);
+  }, [stopAudio]);
 
   const askAI = useCallback(async (userText: string, isFreeChat = false, onDone?: () => void) => {
     setIsThinking(true);
@@ -189,15 +128,8 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
           memoryRef.current = data.memoryUpdate;
         }
         stopPageAudio();
-        // Free talk: bat interrupt detect truoc khi phat audio
-        if (isFreeChat && freeTalkActiveRef.current) {
-          isPlayingRef.current = true;
-          startInterruptDetect(() => {
-            stopAudio();
-            // recognition dang chay se tu onend -> restart
-            // neu recognition chua chay -> startFreeTalkListening se duoc goi tu audio.onended
-          });
-        }
+        // Danh dau dang phat truoc khi play
+        if (isFreeChat) isPlayingRef.current = true;
         await new Promise<void>(resolve => speakText(data.reply, resolve));
       }
     } catch (e) { console.error('AI error:', e); }
@@ -206,7 +138,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       isPlayingRef.current = false;
       onDone?.();
     }
-  }, [speakText, stopPageAudio, startInterruptDetect, stopAudio]);
+  }, [speakText, stopPageAudio]);
 
   // ══════════════════════════════════════
   // ASK MODE
@@ -274,14 +206,13 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
   // ══════════════════════════════════════════════════════════════
   // FREE TALK MODE
   //
-  // Thiet ke:
-  //  - continuous=true, chi lay FINAL results (khong dung interim de gui)
-  //  - accumulatedText la bien LOCAL trong closure, KHONG phai ref
-  //    -> moi session recognition co accumulated rieng, khong bi shared
-  //  - ftSentRef: guard tuyet doi, set=true ngay khi quyet dinh gui
-  //    -> du onresult/onend fire bao nhieu lan cung khong gui 2 lan
-  //  - Khi AI phat audio: dung Web Audio analyser de detect tieng noi
-  //    -> interrupt: dung audio, doi recognition hien tai den onend -> restart
+  // Approach: Recognition LUON CHAY lien tuc (ke ca khi AI dang phat audio).
+  // Khi AI dang noi ma recognition bat duoc speech -> stopAudio() ngay.
+  // Sau do tiep tuc tich luy text binh thuong.
+  //
+  // isAudioPlaying ref: biet co dang phat khong -> quyet dinh interrupt hay accumulate
+  // ftSentRef: guard khong gui 2 lan
+  // accumulatedText: local closure, reset moi startFreeTalkListening()
   // ══════════════════════════════════════════════════════════════
   const startFreeTalkListening = useCallback(() => {
     if (!freeTalkActiveRef.current) return;
@@ -292,15 +223,12 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
 
     const r = new SR();
     r.lang = languageRef.current === 'vi' ? 'vi-VN' : 'en-US';
-    r.continuous = true;       // true de khong bi cat giua cau
-    r.interimResults = false;  // FALSE - chi lay final, khong bao gio lap
+    r.continuous = true;
+    r.interimResults = false; // chi final, khong lap
 
     recognitionRef.current = r;
     isStartedRef.current = false;
     ftSentRef.current = false;
-
-    // accumulated TEXT la bien local trong closure nay
-    // -> moi lan startFreeTalkListening() tao 1 closure moi, accumulated = ''
     let accumulatedText = '';
 
     r.onstart = () => {
@@ -310,41 +238,56 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     };
 
     r.onresult = (e: any) => {
-      if (ftSentRef.current) return; // guard: da gui roi thi bo qua
+      if (ftSentRef.current) return;
 
-      // Lay tat ca final results tu event nay
       let newText = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (e.results[i].isFinal) newText += e.results[i][0].transcript;
       }
-      if (!newText) return;
+      if (!newText.trim()) return;
 
+      // ── INTERRUPT: Neu AI dang phat audio -> dung ngay, reset accumulated
+      // Recognition van tiep tuc chay, user noi tiep binh thuong
+      if (isPlayingRef.current) {
+        stopAudio(); // triggers audio.onended nhung ta khong restart la duoc
+        accumulatedText = ''; // bo phan text bi nghe nham tu audio AI
+        // Lay text user vua noi lam diem bat dau moi
+        accumulatedText = newText.trim();
+        setTranscript(accumulatedText);
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = setTimeout(() => sendAccumulated(), 1800);
+        return;
+      }
+
+      // ── BINH THUONG: Tich luy text
       accumulatedText = (accumulatedText + ' ' + newText).trim();
       setTranscript(accumulatedText);
 
-      // Reset silence timer: 1.8s im lang sau final result -> gui
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = setTimeout(() => {
-        if (ftSentRef.current) return;
-        const textToSend = accumulatedText.trim();
-        if (textToSend.length > 1 && freeTalkActiveRef.current) {
-          ftSentRef.current = true; // LOCK ngay truoc moi thu
-          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-          setTranscript('');
-          setIsListening(false);
-          isStartedRef.current = false;
-          try { r.stop(); } catch {}
+      silenceTimerRef.current = setTimeout(() => sendAccumulated(), 1800);
+    };
 
-          // Goi AI, khi xong moi restart lang nghe
-          askAI(textToSend, true, () => {
-            if (freeTalkActiveRef.current) {
-              setTimeout(() => {
-                if (freeTalkActiveRef.current) startFreeTalkListening();
-              }, 400);
-            }
-          });
+    const sendAccumulated = () => {
+      if (ftSentRef.current) return;
+      const textToSend = accumulatedText.trim();
+      if (textToSend.length < 2 || !freeTalkActiveRef.current) return;
+
+      ftSentRef.current = true;
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      // Dung recognition hien tai
+      isStartedRef.current = false;
+      try { r.stop(); } catch {}
+      setTranscript('');
+      setIsListening(false);
+
+      // Goi AI; khi xong (bao gom ca phat audio) moi restart lang nghe
+      askAI(textToSend, true, () => {
+        if (freeTalkActiveRef.current) {
+          setTimeout(() => {
+            if (freeTalkActiveRef.current) startFreeTalkListening();
+          }, 300);
         }
-      }, 1800);
+      });
     };
 
     r.onerror = (e: any) => {
@@ -352,13 +295,12 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       setIsListening(false);
       if (e.error === 'aborted') return;
       if (e.error === 'no-speech') {
-        // Browser khong nghe thay gi -> restart
         if (freeTalkActiveRef.current && !ftSentRef.current) {
           setTimeout(() => {
             if (freeTalkActiveRef.current && !isStartedRef.current && !ftSentRef.current) {
               startFreeTalkListening();
             }
-          }, 300);
+          }, 200);
         }
         return;
       }
@@ -371,28 +313,25 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     r.onend = () => {
       isStartedRef.current = false;
       setIsListening(false);
-      // Neu da gui hoac dang xu ly -> khong restart o day (askAI onDone se restart)
-      if (ftSentRef.current) return;
-      // Chua gui gi, free talk van on -> restart de tiep tuc lang nghe
+      if (ftSentRef.current) return; // da gui -> cho onDone restart
       if (freeTalkActiveRef.current) {
         setTimeout(() => {
           if (freeTalkActiveRef.current && !isStartedRef.current && !ftSentRef.current) {
             startFreeTalkListening();
           }
-        }, 300);
+        }, 200);
       }
     };
 
     try { r.start(); } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [askAI, language]);
+  }, [askAI, stopAudio, language]);
 
   const toggleFreeTalk = useCallback(() => {
     if (freeTalkActive) {
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       ftSentRef.current = true; // ngan onend restart
       if (recognitionRef.current && isStartedRef.current) { try { recognitionRef.current.stop(); } catch {} }
-      stopInterruptDetect();
       stopAudio();
       setFreeTalkActive(false);
       setIsListening(false);
@@ -403,13 +342,12 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       setError('');
       setTimeout(() => startFreeTalkListening(), 100);
     }
-  }, [freeTalkActive, startFreeTalkListening, stopAudio, stopInterruptDetect]);
+  }, [freeTalkActive, startFreeTalkListening, stopAudio]);
 
   const handleClose = () => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     ftSentRef.current = true;
     if (recognitionRef.current && isStartedRef.current) { try { recognitionRef.current.stop(); } catch {} }
-    stopInterruptDetect();
     stopAudio();
     setFreeTalkActive(false);
     setIsOpen(false);
