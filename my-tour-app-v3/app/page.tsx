@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { Navigation, MapPin, Volume2, VolumeX, CheckCircle, X, Map, ShoppingBag, Globe } from 'lucide-react';
+import { Navigation, MapPin, Volume2, VolumeX, X, Map, ShoppingBag, Globe } from 'lucide-react';
 import ShopTab from '@/components/ShopTab';
 import VoiceChat from '@/components/VoiceChat';
 
@@ -15,39 +15,79 @@ const MapContainer = dynamic(() => import('@/components/MapContainer'), {
   ),
 });
 
-interface Message { role: 'ai' | 'system'; content: string; time: string; }
+interface Message {
+  role: 'ai' | 'system';
+  content: string;
+  time: string;
+}
+
 interface ConversationMemory {
   summary: string;
   recentMessages: { role: string; content: string }[];
   messageCount: number;
 }
-const MEMORY_KEY = 'tour_conversation_memory';
-const emptyMemory = (): ConversationMemory => ({ summary: '', recentMessages: [], messageCount: 0 });
 
-const translations = {
-  vi: {
-    tour: 'Tour', shop: 'Mua sắm', tracking: 'Đang theo dõi', waiting: 'Chờ kích hoạt',
-    points: 'điểm', navigatingTo: 'Đang dẫn đường đến', km: 'km', min: 'phút',
-    welcome: 'Chào mừng!', tapToStart: 'Bấm Navigation để bắt đầu tour',
-    startTour: '🚀 Bắt đầu tour! Di chuyển đến các địa điểm để nghe thuyết minh.',
-    stopTour: '⏹️ Đã dừng tour.', cancelNav: '❌ Đã hủy chỉ đường',
-    gpsError: '❌ Cần cấp quyền GPS. Vào Cài đặt → Quyền → Vị trí.',
-    loadError: '⚠️ Không thể tải thông tin', arrivedAt: '📍 Đã đến', navigateTo: '🗺️ Chỉ đường đến',
-  },
-  en: {
-    tour: 'Tour', shop: 'Shop', tracking: 'Tracking', waiting: 'Ready',
-    points: 'spots', navigatingTo: 'Navigating to', km: 'km', min: 'min',
-    welcome: 'Welcome!', tapToStart: 'Tap Navigation to start tour',
-    startTour: '🚀 Tour started! Move to locations to hear the guide.',
-    stopTour: '⏹️ Tour stopped.', cancelNav: '❌ Navigation cancelled',
-    gpsError: '❌ Please enable GPS in Settings → Permissions → Location.',
-    loadError: '⚠️ Cannot load information', arrivedAt: '📍 Arrived at', navigateTo: '🗺️ Navigate to',
-  },
-};
+interface StoredConversationMemory {
+  expiresAt: number;
+  data: ConversationMemory;
+}
 
 type Language = 'vi' | 'en';
 type CityType = 'ninh-binh' | 'hanoi';
 type TabType = 'tour' | 'shop';
+
+const MEMORY_KEY_PREFIX = 'tour_conversation_memory';
+const LEGACY_MEMORY_KEY = 'tour_conversation_memory';
+const MEMORY_TTL_MS = 48 * 60 * 60 * 1000;
+
+const emptyMemory = (): ConversationMemory => ({
+  summary: '',
+  recentMessages: [],
+  messageCount: 0,
+});
+
+const translations = {
+  vi: {
+    tour: 'Tour',
+    shop: 'Mua sắm',
+    tracking: 'Đang theo dõi',
+    waiting: 'Chờ kích hoạt',
+    points: 'điểm',
+    navigatingTo: 'Đang dẫn đường đến',
+    km: 'km',
+    min: 'phút',
+    welcome: 'Chào mừng!',
+    tapToStart: 'Bấm Navigation để bắt đầu tour',
+    startTour: '🚀 Bắt đầu tour! Di chuyển đến các địa điểm để nghe thuyết minh.',
+    stopTour: '⏹️ Đã dừng tour.',
+    cancelNav: '❌ Đã hủy chỉ đường',
+    gpsError: '❌ Cần cấp quyền GPS. Vào Cài đặt → Quyền → Vị trí.',
+    loadError: '⚠️ Không thể tải thông tin',
+    arrivedAt: '📍 Đã đến',
+    navigateTo: '🗺️ Chỉ đường đến',
+  },
+  en: {
+    tour: 'Tour',
+    shop: 'Shop',
+    tracking: 'Tracking',
+    waiting: 'Ready',
+    points: 'spots',
+    navigatingTo: 'Navigating to',
+    km: 'km',
+    min: 'min',
+    welcome: 'Welcome!',
+    tapToStart: 'Tap Navigation to start tour',
+    startTour: '🚀 Tour started! Move to locations to hear the guide.',
+    stopTour: '⏹️ Tour stopped.',
+    cancelNav: '❌ Navigation cancelled',
+    gpsError: '❌ Please enable GPS in Settings → Permissions → Location.',
+    loadError: '⚠️ Cannot load information',
+    arrivedAt: '📍 Arrived at',
+    navigateTo: '🗺️ Navigate to',
+  },
+};
+
+const getMemoryKey = (city: CityType) => `${MEMORY_KEY_PREFIX}_${city}`;
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<TabType>('tour');
@@ -63,6 +103,7 @@ export default function Home() {
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
   const [currentLocationId, setCurrentLocationId] = useState<string | null>(null);
   const [memory, setMemory] = useState<ConversationMemory>(emptyMemory());
+
   // Permission states
   const [gpsOk, setGpsOk] = useState<boolean | null>(null);
   const [micOk, setMicOk] = useState<boolean | null>(null);
@@ -71,38 +112,160 @@ export default function Home() {
   const isMutedRef = useRef(isMuted);
   const languageRef = useRef(language);
   const memoryRef = useRef(memory);
+  const selectedCityRef = useRef<CityType>(selectedCity);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
-  useEffect(() => { languageRef.current = language; }, [language]);
-  useEffect(() => { memoryRef.current = memory; }, [memory]);
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
+
+  useEffect(() => {
+    languageRef.current = language;
+  }, [language]);
+
+  useEffect(() => {
+    memoryRef.current = memory;
+  }, [memory]);
+
+  useEffect(() => {
+    selectedCityRef.current = selectedCity;
+  }, [selectedCity]);
 
   const t = translations[language];
 
-  // Load memory
-  useEffect(() => {
+  // =========================
+  // Memory helpers
+  // =========================
+  const persistMemoryToStorage = useCallback((city: CityType, m: ConversationMemory) => {
     try {
-      const saved = localStorage.getItem(MEMORY_KEY);
-      if (saved) { const p = JSON.parse(saved); setMemory(p); memoryRef.current = p; }
+      const payload: StoredConversationMemory = {
+        expiresAt: Date.now() + MEMORY_TTL_MS,
+        data: m,
+      };
+      localStorage.setItem(getMemoryKey(city), JSON.stringify(payload));
+    } catch (e) {
+      console.error('persistMemoryToStorage error:', e);
+    }
+  }, []);
+
+  const removeMemoryFromStorage = useCallback((city: CityType) => {
+    try {
+      localStorage.removeItem(getMemoryKey(city));
     } catch {}
   }, []);
 
+  const readMemoryFromStorage = useCallback((city: CityType): ConversationMemory => {
+    try {
+      const raw = localStorage.getItem(getMemoryKey(city));
+
+      // 1) đọc key mới có TTL
+      if (raw) {
+        const parsed = JSON.parse(raw) as StoredConversationMemory | ConversationMemory;
+
+        // format mới
+        if (
+          parsed &&
+          typeof parsed === 'object' &&
+          'data' in parsed &&
+          'expiresAt' in parsed
+        ) {
+          const wrapped = parsed as StoredConversationMemory;
+          if (Date.now() > wrapped.expiresAt) {
+            localStorage.removeItem(getMemoryKey(city));
+            return emptyMemory();
+          }
+          return wrapped.data || emptyMemory();
+        }
+
+        // format cũ không TTL -> migrate
+        if (
+          parsed &&
+          typeof parsed === 'object' &&
+          'summary' in parsed &&
+          'recentMessages' in parsed &&
+          'messageCount' in parsed
+        ) {
+          const legacyMemory = parsed as ConversationMemory;
+          persistMemoryToStorage(city, legacyMemory);
+          return legacyMemory;
+        }
+      }
+
+      // 2) migrate key cũ global nếu có
+      const legacyRaw = localStorage.getItem(LEGACY_MEMORY_KEY);
+      if (legacyRaw) {
+        const legacyMemory = JSON.parse(legacyRaw) as ConversationMemory;
+        if (
+          legacyMemory &&
+          typeof legacyMemory === 'object' &&
+          'summary' in legacyMemory &&
+          'recentMessages' in legacyMemory &&
+          'messageCount' in legacyMemory
+        ) {
+          persistMemoryToStorage(city, legacyMemory);
+          localStorage.removeItem(LEGACY_MEMORY_KEY);
+          return legacyMemory;
+        }
+      }
+    } catch (e) {
+      console.error('readMemoryFromStorage error:', e);
+    }
+
+    return emptyMemory();
+  }, [persistMemoryToStorage]);
+
+  const loadMemoryForCity = useCallback((city: CityType) => {
+    const loaded = readMemoryFromStorage(city);
+    setMemory(loaded);
+    memoryRef.current = loaded;
+  }, [readMemoryFromStorage]);
+
+  const saveMemory = useCallback((m: ConversationMemory) => {
+    setMemory(m);
+    memoryRef.current = m;
+    persistMemoryToStorage(selectedCityRef.current, m);
+  }, [persistMemoryToStorage]);
+
+  const clearMemory = useCallback((city?: CityType) => {
+    const targetCity = city || selectedCityRef.current;
+    removeMemoryFromStorage(targetCity);
+    if (targetCity === selectedCityRef.current) {
+      const empty = emptyMemory();
+      setMemory(empty);
+      memoryRef.current = empty;
+    }
+  }, [removeMemoryFromStorage]);
+
+  // =========================
+  // Load memory on mount
+  // =========================
+  useEffect(() => {
+    loadMemoryForCity(selectedCity);
+  }, [loadMemoryForCity, selectedCity]);
+
+  // =========================
   // Check permissions
+  // =========================
   useEffect(() => {
     if (!('permissions' in navigator)) return;
+
     navigator.permissions.query({ name: 'geolocation' }).then(r => {
       setGpsOk(r.state === 'granted');
       r.onchange = () => setGpsOk(r.state === 'granted');
     }).catch(() => {});
+
     navigator.permissions.query({ name: 'microphone' as PermissionName }).then(r => {
       setMicOk(r.state === 'granted');
       r.onchange = () => setMicOk(r.state === 'granted');
     }).catch(() => {});
   }, []);
 
+  // =========================
   // Warm up GPS
+  // =========================
   useEffect(() => {
     if (!('geolocation' in navigator)) return;
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setGpsOk(true);
@@ -115,17 +278,19 @@ export default function Home() {
     );
   }, []);
 
+  // =========================
   // Service worker
+  // =========================
   useEffect(() => {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
   }, []);
 
   const requestGPS = () => {
-    // iOS không có permissions.query → gọi thẳng getCurrentPosition để trigger popup xin quyền
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setGpsOk(true);
-        // Cập nhật shared position luôn
         window.dispatchEvent(new CustomEvent('gps-warmed', {
           detail: { lat: pos.coords.latitude, lng: pos.coords.longitude }
         }));
@@ -133,7 +298,6 @@ export default function Home() {
       (err) => {
         setGpsOk(false);
         if (err.code === 1) {
-          // Permission denied → hướng dẫn vào Settings
           alert(language === 'vi'
             ? 'GPS bị từ chối. Vào Cài đặt → Chrome/Safari → Vị trí → Cho phép'
             : 'GPS denied. Go to Settings → Chrome/Safari → Location → Allow');
@@ -148,69 +312,133 @@ export default function Home() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach(t => t.stop());
       setMicOk(true);
-    } catch { setMicOk(false); }
+    } catch {
+      setMicOk(false);
+    }
   };
-
-  const saveMemory = useCallback((m: ConversationMemory) => {
-    setMemory(m); memoryRef.current = m;
-    try { localStorage.setItem(MEMORY_KEY, JSON.stringify(m)); } catch {}
-  }, []);
 
   const speakText = useCallback(async (text: string) => {
     if (isMutedRef.current) return;
+
     try {
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+
       const res = await fetch('/api/tts', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, language: languageRef.current }),
       });
+
       if (!res.ok) return;
+
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audioRef.current = audio;
-      audio.onended = () => { URL.revokeObjectURL(url); audioRef.current = null; };
-      audio.onerror = () => { URL.revokeObjectURL(url); audioRef.current = null; };
+
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        audioRef.current = null;
+      };
+
+      audio.onerror = () => {
+        URL.revokeObjectURL(url);
+        audioRef.current = null;
+      };
+
       await audio.play();
-    } catch (e) { console.error('speakText error:', e); }
+    } catch (e) {
+      console.error('speakText error:', e);
+    }
   }, []);
 
+  // =========================
+  // Khi đổi city:
+  // reset UI, dừng tracking/audio
+  // nhưng KHÔNG xóa memory
+  // load memory của city mới
+  // =========================
   useEffect(() => {
-    if (isTracking) { setIsTracking(false); window.dispatchEvent(new CustomEvent('stop-tracking')); }
-    setMessages([]); setVisitedCount(0); setRouteInfo(null);
-    setNavigatingTo(null); setCurrentLocationId(null);
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-    saveMemory(emptyMemory());
-  }, [selectedCity]);
+    if (isTracking) {
+      setIsTracking(false);
+      window.dispatchEvent(new CustomEvent('stop-tracking'));
+    }
+
+    setMessages([]);
+    setVisitedCount(0);
+    setRouteInfo(null);
+    setNavigatingTo(null);
+    setCurrentLocationId(null);
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+
+    loadMemoryForCity(selectedCity);
+  }, [selectedCity, isTracking, loadMemoryForCity]);
 
   const addMessage = useCallback((msg: string, isAi: boolean) => {
-    const time = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-    setMessages(prev => [...prev, { role: isAi ? 'ai' : 'system', content: msg, time }]);
+    const time = new Date().toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    setMessages(prev => [
+      ...prev,
+      { role: isAi ? 'ai' : 'system', content: msg, time }
+    ]);
   }, []);
 
   const fetchAI = useCallback(async (prompt: string, locationId?: string | null) => {
     const lang = languageRef.current;
+
     try {
       const res = await fetch('/api/chat', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contextPrompt: prompt, locationId: locationId || null, language: lang, conversationMemory: memoryRef.current }),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contextPrompt: prompt,
+          locationId: locationId || null,
+          language: lang,
+          conversationMemory: memoryRef.current,
+        }),
       });
+
       if (res.ok) {
         const data = await res.json();
         addMessage(data.reply, true);
         speakText(data.reply);
-        if (data.memoryUpdate) saveMemory(data.memoryUpdate);
-      } else { addMessage(translations[lang].loadError, false); }
-    } catch { addMessage(translations[lang].loadError, false); }
+
+        if (data.memoryUpdate) {
+          saveMemory(data.memoryUpdate);
+        }
+      } else {
+        addMessage(translations[lang].loadError, false);
+      }
+    } catch {
+      addMessage(translations[lang].loadError, false);
+    }
   }, [addMessage, speakText, saveMemory]);
 
   useEffect(() => {
     const onNavigateTo = (e: CustomEvent) => {
-      setNavigatingTo(e.detail.name); setRouteInfo(null);
+      setNavigatingTo(e.detail.name);
+      setRouteInfo(null);
       addMessage(`${translations[languageRef.current].navigateTo} ${e.detail.name}`, false);
     };
-    const onRouteFound = (e: CustomEvent) => { setRouteInfo(e.detail); };
-    const onCancelNav = () => { setNavigatingTo(null); setRouteInfo(null); };
+
+    const onRouteFound = (e: CustomEvent) => {
+      setRouteInfo(e.detail);
+    };
+
+    const onCancelNav = () => {
+      setNavigatingTo(null);
+      setRouteInfo(null);
+    };
+
     const onArrived = (e: CustomEvent) => {
       const { name, prompt, locationId } = e.detail;
       setCurrentLocationId(locationId || null);
@@ -218,12 +446,20 @@ export default function Home() {
       addMessage(`${translations[languageRef.current].arrivedAt} ${name}`, false);
       fetchAI(prompt, locationId);
     };
-    const onVoiceSpeak = () => { if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; } };
+
+    const onVoiceSpeak = () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+
     window.addEventListener('navigate-to', onNavigateTo as EventListener);
     window.addEventListener('route-found', onRouteFound as EventListener);
     window.addEventListener('navigation-cancelled', onCancelNav);
     window.addEventListener('location-arrived', onArrived as EventListener);
     window.addEventListener('voice-chat-speaking', onVoiceSpeak);
+
     return () => {
       window.removeEventListener('navigate-to', onNavigateTo as EventListener);
       window.removeEventListener('route-found', onRouteFound as EventListener);
@@ -235,46 +471,66 @@ export default function Home() {
 
   const handleStartTour = () => {
     if (!isTracking) {
-      if (!('geolocation' in navigator)) { addMessage(t.gpsError, false); return; }
+      if (!('geolocation' in navigator)) {
+        addMessage(t.gpsError, false);
+        return;
+      }
+
       navigator.permissions?.query({ name: 'geolocation' }).then(r => {
-        if (r.state === 'denied') { addMessage(t.gpsError, false); return; }
-        setIsTracking(true); addMessage(t.startTour, false);
-      }).catch(() => { setIsTracking(true); addMessage(t.startTour, false); });
+        if (r.state === 'denied') {
+          addMessage(t.gpsError, false);
+          return;
+        }
+        setIsTracking(true);
+        addMessage(t.startTour, false);
+      }).catch(() => {
+        setIsTracking(true);
+        addMessage(t.startTour, false);
+      });
     } else {
-      setIsTracking(false); setNavigatingTo(null); setRouteInfo(null);
+      setIsTracking(false);
+      setNavigatingTo(null);
+      setRouteInfo(null);
       addMessage(t.stopTour, false);
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+
       window.dispatchEvent(new CustomEvent('stop-tracking'));
     }
   };
 
   const handleCancelNavigation = () => {
-    setNavigatingTo(null); setRouteInfo(null);
+    setNavigatingTo(null);
+    setRouteInfo(null);
     addMessage(t.cancelNav, false);
     window.dispatchEvent(new CustomEvent('cancel-navigation'));
   };
 
   const toggleMute = () => {
     setIsMuted(prev => {
-      if (!prev && audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+      if (!prev && audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
       return !prev;
     });
   };
 
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages.length]);
-
-  // Permission buttons moved inline to header
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length]);
 
   return (
     <div className="flex flex-col h-[100dvh] bg-gray-100 overflow-hidden relative">
-
       {activeTab === 'tour' && (
         <>
           {/* ══ HEADER ══ */}
           <div className="absolute top-0 left-0 right-0 z-[1000] p-3">
             <div className="bg-white/95 backdrop-blur-md shadow-lg rounded-2xl overflow-hidden">
-
-              {/* Row 1: luôn hiện - Logo + Title + Start + Collapse */}
+              {/* Row 1 */}
               <div className="flex items-center gap-3 px-4 pt-3 pb-3">
                 <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shrink-0">
                   <MapPin className="text-white" size={22} />
@@ -300,96 +556,123 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Start tour */}
-                <button onClick={handleStartTour}
+                <button
+                  onClick={handleStartTour}
                   className={`w-14 h-14 rounded-2xl shadow-lg transition-all active:scale-95 flex items-center justify-center shrink-0 ${
                     isTracking
                       ? 'bg-gradient-to-br from-red-500 to-pink-500 text-white'
                       : 'bg-gradient-to-br from-blue-500 to-cyan-500 text-white'
-                  }`}>
+                  }`}
+                >
                   <Navigation size={26} className={isTracking ? 'animate-pulse' : ''} />
                 </button>
 
-                {/* Toggle collapse */}
                 <button
                   onClick={() => setHeaderCollapsed(p => !p)}
                   className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center shrink-0 active:scale-95 transition-all"
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
-                    style={{ transform: headerCollapsed ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
-                    <path d="M18 15l-6-6-6 6"/>
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    style={{
+                      transform: headerCollapsed ? 'rotate(180deg)' : 'rotate(0deg)',
+                      transition: 'transform 0.2s'
+                    }}
+                  >
+                    <path d="M18 15l-6-6-6 6" />
                   </svg>
                 </button>
               </div>
 
-              {/* Expandable rows - ẩn khi collapsed */}
               {!headerCollapsed && (
                 <>
                   {/* Row 2: City selector */}
                   <div className="flex gap-2 px-4 pb-2">
-                    <button onClick={() => setSelectedCity('ninh-binh')}
+                    <button
+                      onClick={() => setSelectedCity('ninh-binh')}
                       className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95 ${
                         selectedCity === 'ninh-binh' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'
-                      }`}>
+                      }`}
+                    >
                       🏞️ Ninh Bình
                     </button>
-                    <button onClick={() => setSelectedCity('hanoi')}
+                    <button
+                      onClick={() => setSelectedCity('hanoi')}
                       className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95 ${
                         selectedCity === 'hanoi' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'
-                      }`}>
+                      }`}
+                    >
                       🏛️ Hà Nội
                     </button>
                   </div>
 
-                  {/* Row 3: GPS, Mic, Sound, Language */}
+                  {/* Row 3 */}
                   <div className="flex items-center gap-2 px-4 pb-3 border-t border-gray-100 pt-2">
-                    <button onClick={requestGPS}
+                    <button
+                      onClick={requestGPS}
                       className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium transition-all active:scale-95 ${
                         gpsOk === true ? 'bg-green-50 text-green-600'
                         : gpsOk === false ? 'bg-red-50 text-red-500 animate-pulse'
                         : 'bg-gray-100 text-gray-500'
-                      }`}>
+                      }`}
+                    >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+                        <circle cx="12" cy="12" r="3" />
+                        <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
                       </svg>
                       GPS {gpsOk === true ? '✓' : gpsOk === false ? '✗' : '?'}
                     </button>
 
-                    <button onClick={requestMic}
+                    <button
+                      onClick={requestMic}
                       className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium transition-all active:scale-95 ${
                         micOk === true ? 'bg-green-50 text-green-600'
                         : micOk === false ? 'bg-red-50 text-red-500 animate-pulse'
                         : 'bg-gray-100 text-gray-500'
-                      }`}>
+                      }`}
+                    >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <rect x="9" y="2" width="6" height="11" rx="3"/>
-                        <path d="M5 10a7 7 0 0 0 14 0M12 19v3M9 22h6"/>
+                        <rect x="9" y="2" width="6" height="11" rx="3" />
+                        <path d="M5 10a7 7 0 0 0 14 0M12 19v3M9 22h6" />
                       </svg>
                       Mic {micOk === true ? '✓' : micOk === false ? '✗' : '?'}
                     </button>
 
-                    <button onClick={toggleMute}
+                    <button
+                      onClick={toggleMute}
                       className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium transition-all active:scale-95 ${
                         isMuted ? 'bg-red-50 text-red-500' : 'bg-gray-100 text-gray-500'
-                      }`}>
+                      }`}
+                    >
                       {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
                       {isMuted ? (language === 'vi' ? 'Tắt' : 'Muted') : (language === 'vi' ? 'Âm thanh' : 'Sound')}
                     </button>
 
                     <div className="relative">
-                      <button onClick={() => setShowLangMenu(!showLangMenu)}
-                        className="h-10 px-3 rounded-xl bg-gray-100 text-gray-500 flex items-center gap-1 text-xs font-medium active:scale-95 transition-all">
+                      <button
+                        onClick={() => setShowLangMenu(!showLangMenu)}
+                        className="h-10 px-3 rounded-xl bg-gray-100 text-gray-500 flex items-center gap-1 text-xs font-medium active:scale-95 transition-all"
+                      >
                         <Globe size={14} />
                         {language.toUpperCase()}
                       </button>
+
                       {showLangMenu && (
                         <div className="absolute right-0 bottom-12 bg-white rounded-xl shadow-xl overflow-hidden z-10 w-36">
-                          <button onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
-                            className={`w-full px-4 py-3 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}>
+                          <button
+                            onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
+                            className={`w-full px-4 py-3 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}
+                          >
                             🇻🇳 Tiếng Việt
                           </button>
-                          <button onClick={() => { setLanguage('en'); setShowLangMenu(false); }}
-                            className={`w-full px-4 py-3 text-left text-sm ${language === 'en' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}>
+                          <button
+                            onClick={() => { setLanguage('en'); setShowLangMenu(false); }}
+                            className={`w-full px-4 py-3 text-left text-sm ${language === 'en' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}
+                          >
                             🇬🇧 English
                           </button>
                         </div>
@@ -425,13 +708,20 @@ export default function Home() {
           </div>
 
           {/* Voice Chat */}
-          <VoiceChat language={language} isMuted={isMuted} locationId={currentLocationId} memory={memory} onMemoryUpdate={saveMemory} />
+          <VoiceChat
+            language={language}
+            isMuted={isMuted}
+            locationId={currentLocationId}
+            memory={memory}
+            onMemoryUpdate={saveMemory}
+          />
 
           {/* Chat Panel */}
           <div className="h-[28vh] bg-white rounded-t-3xl shadow-2xl z-[1000] flex flex-col">
             <div className="flex justify-center pt-2 pb-1">
               <div className="w-10 h-1 bg-gray-300 rounded-full" />
             </div>
+
             {memory.summary && (
               <div className="px-4 pb-1">
                 <div className="bg-purple-50 rounded-xl px-3 py-1.5 flex items-start gap-1.5">
@@ -440,6 +730,7 @@ export default function Home() {
                 </div>
               </div>
             )}
+
             <div className="flex-grow overflow-y-auto px-4 pb-4 space-y-3">
               {messages.length === 0 && (
                 <div className="flex flex-col items-center justify-center h-full text-center">
@@ -448,35 +739,51 @@ export default function Home() {
                   <p className="text-gray-400 text-sm mt-1">{t.tapToStart}</p>
                 </div>
               )}
+
               {messages.map((m, i) => (
                 <div key={i} className={`flex ${m.role === 'ai' ? 'justify-start' : 'justify-center'}`}>
                   <div className={`max-w-[90%] p-3 rounded-2xl text-sm ${
-                    m.role === 'ai' ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100'
-                    : 'bg-gray-100 text-gray-500 text-xs'
+                    m.role === 'ai'
+                      ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100'
+                      : 'bg-gray-100 text-gray-500 text-xs'
                   }`}>
                     <p className="whitespace-pre-wrap leading-relaxed">{m.content}</p>
-                    {m.role === 'ai' && <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>}
+                    {m.role === 'ai' && (
+                      <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>
+                    )}
                   </div>
                 </div>
               ))}
+
               <div ref={chatEndRef} />
             </div>
           </div>
         </>
       )}
 
-      {activeTab === 'shop' && <ShopTab selectedCity={selectedCity} language={language} />}
+      {activeTab === 'shop' && (
+        <ShopTab selectedCity={selectedCity} language={language} />
+      )}
 
       {/* Bottom Tab Bar */}
       <div className="bg-white border-t border-gray-200 z-[1002]">
         <div className="flex justify-around items-center py-2 px-4 max-w-md mx-auto">
-          <button onClick={() => setActiveTab('tour')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
+          <button
+            onClick={() => setActiveTab('tour')}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
+              activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'
+            }`}
+          >
             <Map size={24} />
             <span className="text-xs mt-1 font-medium">{t.tour}</span>
           </button>
-          <button onClick={() => setActiveTab('shop')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
+
+          <button
+            onClick={() => setActiveTab('shop')}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
+              activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'
+            }`}
+          >
             <ShoppingBag size={24} />
             <span className="text-xs mt-1 font-medium">{t.shop}</span>
           </button>
