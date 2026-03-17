@@ -323,3 +323,413 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
 
       if (final && !hasSent) {
         hasSent = true;
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        isStartedRef.current = false;
+        setIsListening(false);
+        r.stop();
+        askAI(final.trim());
+        return;
+      }
+
+      if (interim !== lastInterim) {
+        lastInterim = interim;
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = setTimeout(() => {
+          if (isStartedRef.current && interim.trim().length > 1 && !hasSent) {
+            hasSent = true;
+            isStartedRef.current = false;
+            setIsListening(false);
+            r.stop();
+            askAI(interim.trim());
+          }
+        }, 1500);
+      }
+    };
+
+    r.onerror = (e: any) => {
+      isStartedRef.current = false;
+      setIsListening(false);
+
+      if (e.error === 'aborted') return;
+      if (e.error === 'not-allowed') {
+        setError(text.micDenied);
+      } else if (e.error !== 'no-speech') {
+        setError(`Error: ${e.error}`);
+      }
+    };
+
+    r.onend = () => {
+      isStartedRef.current = false;
+      setIsListening(false);
+    };
+
+    r.start();
+  }, [isThinking, isListening, askAI, stopPageAudio, stopAudio, text.useBrowser, text.micDenied]);
+
+  const stopAskListening = useCallback(() => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    if (recognitionRef.current && isStartedRef.current) {
+      recognitionRef.current.stop();
+    }
+    setIsListening(false);
+  }, []);
+
+  // FREE TALK MODE
+  const startFreeTalkListening = useCallback(() => {
+    if (!freeTalkActiveRef.current) return;
+    if (isStartedRef.current) return;
+
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+
+    const r = new SR();
+    r.lang = getRecognitionLang(languageRef.current);
+    r.continuous = true;
+    r.interimResults = false;
+
+    recognitionRef.current = r;
+    isStartedRef.current = false;
+    ftSentRef.current = false;
+
+    let accumulatedText = '';
+
+    r.onstart = () => {
+      isStartedRef.current = true;
+      setIsListening(true);
+      setTranscript('');
+    };
+
+    r.onresult = (e: any) => {
+      if (ftSentRef.current) return;
+
+      let newText = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          newText += e.results[i][0].transcript;
+        }
+      }
+
+      if (!newText.trim()) return;
+
+      if (isPlayingRef.current) {
+        stopAudio();
+        accumulatedText = newText.trim();
+        setTranscript(accumulatedText);
+
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = setTimeout(() => sendAccumulated(), 1800);
+        return;
+      }
+
+      accumulatedText = (accumulatedText + ' ' + newText).trim();
+      setTranscript(accumulatedText);
+
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = setTimeout(() => sendAccumulated(), 1800);
+    };
+
+    const sendAccumulated = () => {
+      if (ftSentRef.current) return;
+
+      const textToSend = accumulatedText.trim();
+      if (textToSend.length < 2 || !freeTalkActiveRef.current) return;
+
+      ftSentRef.current = true;
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+
+      setTranscript('');
+      accumulatedText = '';
+
+      askAI(textToSend, true, () => {
+        ftSentRef.current = false;
+      });
+    };
+
+    r.onerror = (e: any) => {
+      isStartedRef.current = false;
+      setIsListening(false);
+
+      if (e.error === 'aborted') return;
+
+      if (e.error === 'no-speech') {
+        if (freeTalkActiveRef.current && !ftSentRef.current) {
+          setTimeout(() => {
+            if (freeTalkActiveRef.current && !isStartedRef.current) {
+              startFreeTalkListening();
+            }
+          }, 200);
+        }
+        return;
+      }
+
+      if (e.error === 'not-allowed') {
+        setFreeTalkActive(false);
+        setError(text.micDenied);
+      }
+    };
+
+    r.onend = () => {
+      isStartedRef.current = false;
+      setIsListening(false);
+
+      if (freeTalkActiveRef.current && !ftSentRef.current) {
+        setTimeout(() => {
+          if (freeTalkActiveRef.current && !isStartedRef.current) {
+            startFreeTalkListening();
+          }
+        }, 200);
+      }
+    };
+
+    try { r.start(); } catch {}
+  }, [askAI, stopAudio, text.micDenied]);
+
+  const toggleFreeTalk = useCallback(() => {
+    if (freeTalkActive) {
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      ftSentRef.current = true;
+      if (recognitionRef.current && isStartedRef.current) {
+        try { recognitionRef.current.stop(); } catch {}
+      }
+      stopAudio();
+      setFreeTalkActive(false);
+      setIsListening(false);
+      setTranscript('');
+    } else {
+      ftSentRef.current = false;
+      setFreeTalkActive(true);
+      setError('');
+      setTimeout(() => startFreeTalkListening(), 100);
+    }
+  }, [freeTalkActive, startFreeTalkListening, stopAudio]);
+
+  const handleClose = () => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    ftSentRef.current = true;
+    if (recognitionRef.current && isStartedRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+    }
+    stopAudio();
+    setFreeTalkActive(false);
+    setIsOpen(false);
+    setMessages([]);
+    setTranscript('');
+    setError('');
+    isStartedRef.current = false;
+  };
+
+  const getButtonState = () => {
+    if (isListening) return 'listening';
+    if (isThinking) return 'thinking';
+    if (isSpeaking) return 'speaking';
+    return 'idle';
+  };
+
+  const buttonState = getButtonState();
+
+  return (
+    <>
+      {!isOpen && (
+        <button
+          onClick={() => setIsOpen(true)}
+          className="absolute bottom-36 right-3 z-[1001] w-24 h-24 bg-gradient-to-br from-purple-500 to-pink-500 text-white rounded-full shadow-2xl flex flex-col items-center justify-center gap-1 hover:scale-110 transition-transform active:scale-95"
+        >
+          <Mic size={36} />
+          <span className="text-[11px] font-semibold">AI Chat</span>
+        </button>
+      )}
+
+      {isOpen && (
+        <div className="absolute bottom-16 left-0 right-0 z-[1001] p-3">
+          <div className="bg-white rounded-3xl shadow-2xl overflow-hidden border border-gray-100">
+
+            {/* Header */}
+            <div className="bg-gradient-to-r from-purple-500 to-pink-500 px-4 py-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 text-white">
+                  <Mic size={18} />
+                  <span className="font-semibold">AI Voice Chat</span>
+                  {locationId && (
+                    <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">📍 {locationId}</span>
+                  )}
+                </div>
+                <button onClick={handleClose} className="text-white/80 hover:text-white">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setMode('ask'); if (freeTalkActive) toggleFreeTalk(); }}
+                  className={`flex-1 py-1.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                    mode === 'ask' ? 'bg-white text-purple-600' : 'bg-white/20 text-white'
+                  }`}
+                >
+                  <MessageCircle size={14} />
+                  {text.ask}
+                </button>
+                <button
+                  onClick={() => setMode('freetalk')}
+                  className={`flex-1 py-1.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                    mode === 'freetalk' ? 'bg-white text-purple-600' : 'bg-white/20 text-white'
+                  }`}
+                >
+                  <Radio size={14} />
+                  {text.freeTalk}
+                </button>
+              </div>
+            </div>
+
+            {/* Messages */}
+            <div className="h-44 overflow-y-auto px-4 py-3 space-y-2 bg-gray-50">
+              {messages.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full text-center gap-2">
+                  {mode === 'ask' ? (
+                    <>
+                      <MessageCircle size={28} className="text-purple-300" />
+                      <p className="text-gray-400 text-xs">{text.holdToAsk}</p>
+                    </>
+                  ) : (
+                    <>
+                      <Radio size={28} className="text-purple-300" />
+                      <p className="text-gray-400 text-xs whitespace-pre-line">{text.freeTalkHint}</p>
+                    </>
+                  )}
+                </div>
+              )}
+              {messages.map((m, i) => (
+                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] px-3 py-2 rounded-2xl text-sm ${
+                    m.role === 'user'
+                      ? 'bg-purple-500 text-white'
+                      : 'bg-white border border-gray-200 text-gray-800'
+                  }`}>
+                    {m.content}
+                  </div>
+                </div>
+              ))}
+              {isThinking && (
+                <div className="flex justify-start">
+                  <div className="bg-white border border-gray-200 px-3 py-2 rounded-2xl flex items-center gap-2">
+                    <Loader2 size={14} className="animate-spin text-purple-500" />
+                    <span className="text-xs text-gray-500">{text.thinking}</span>
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Transcript */}
+            {(isListening || transcript) && (
+              <div className="px-4 py-2 bg-purple-50 border-t border-purple-100">
+                <p className="text-xs text-purple-600 flex items-center gap-1.5">
+                  {isListening && <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse inline-block shrink-0" />}
+                  <span className="truncate">{transcript || text.listening}</span>
+                </p>
+              </div>
+            )}
+
+            {/* Error */}
+            {error && (
+              <div className="px-4 py-2 bg-red-50 border-t border-red-100">
+                <p className="text-xs text-red-500">{error}</p>
+              </div>
+            )}
+
+            {/* Controls */}
+            <div className="px-4 py-4 border-t border-gray-100 bg-white">
+              {mode === 'ask' ? (
+                <div className="flex flex-col items-center gap-2">
+                  <button
+                    onPointerDown={startAskListening}
+                    onPointerUp={stopAskListening}
+                    onPointerLeave={stopAskListening}
+                    disabled={isThinking}
+                    className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 select-none touch-none ${
+                      buttonState === 'listening'
+                        ? 'bg-red-500 text-white scale-110 animate-pulse'
+                        : buttonState === 'thinking'
+                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                        : buttonState === 'speaking'
+                        ? 'bg-gradient-to-br from-green-400 to-emerald-500 text-white'
+                        : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white'
+                    }`}
+                  >
+                    {buttonState === 'thinking' ? (
+                      <Loader2 size={36} className="animate-spin" />
+                    ) : buttonState === 'listening' ? (
+                      <MicOff size={36} />
+                    ) : buttonState === 'speaking' ? (
+                      <Square size={36} />
+                    ) : (
+                      <Mic size={36} />
+                    )}
+                  </button>
+
+                  <p className="text-xs text-gray-400 text-center">
+                    {buttonState === 'listening' ? (
+                      <span className="text-red-500 font-medium">{text.releaseToSend}</span>
+                    ) : buttonState === 'thinking' ? (
+                      <span>{text.processing}</span>
+                    ) : buttonState === 'speaking' ? (
+                      <span className="text-green-600 font-medium">{text.holdToInterrupt}</span>
+                    ) : (
+                      <span>{text.holdToSpeak}</span>
+                    )}
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-2">
+                  <button
+                    onClick={toggleFreeTalk}
+                    disabled={isThinking}
+                    className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 ${
+                      freeTalkActive
+                        ? 'bg-gradient-to-br from-green-400 to-emerald-500 text-white'
+                        : isThinking
+                        ? 'bg-gray-200 text-gray-400'
+                        : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white'
+                    }`}
+                  >
+                    {isThinking ? (
+                      <Loader2 size={36} className="animate-spin" />
+                    ) : freeTalkActive ? (
+                      isListening
+                        ? <Mic size={36} className="animate-pulse" />
+                        : isSpeaking
+                        ? <Square size={36} className="animate-pulse" />
+                        : <Radio size={36} className="animate-pulse" />
+                    ) : (
+                      <Radio size={36} />
+                    )}
+                  </button>
+
+                  <p className="text-xs text-center font-medium">
+                    {isThinking ? (
+                      <span className="text-gray-400">{text.aiThinking}</span>
+                    ) : freeTalkActive ? (
+                      <span className="text-green-600">
+                        {isSpeaking
+                          ? text.aiSpeakingInterrupt
+                          : isListening
+                          ? text.listeningPause
+                          : text.waitingForYou}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">{text.startTalking}</span>
+                    )}
+                  </p>
+
+                  {freeTalkActive && (
+                    <p className="text-xs text-gray-400">{text.tapAgainToStop}</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
