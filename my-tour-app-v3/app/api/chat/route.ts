@@ -1,10 +1,9 @@
-// app/api/chat/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 let embeddingPipeline: any = null;
 
 interface MemoryMessage {
-  role: string; // "user" | "assistant"
+  role: string;
   content: string;
 }
 
@@ -12,7 +11,7 @@ interface ConversationMemory {
   summary: string;
   recentMessages: MemoryMessage[];
   messageCount: number;
-  summaryLang?: "vi" | "en" | "ko" | "zh"; // ✅ NEW
+  summaryLang?: "vi" | "en" | "ko" | "zh";
 }
 
 function normalizeLanguage(input: any): "vi" | "en" | "ko" | "zh" {
@@ -25,25 +24,25 @@ function normalizeLanguage(input: any): "vi" | "en" | "ko" | "zh" {
 
 function langName(lang: "vi" | "en" | "ko" | "zh") {
   switch (lang) {
-    case "en":
-      return "English";
-    case "ko":
-      return "Korean";
-    case "zh":
-      return "Chinese (Simplified)";
-    default:
-      return "Vietnamese";
+    case "en": return "English";
+    case "ko": return "Korean";
+    case "zh": return "Chinese (Simplified)";
+    default: return "Vietnamese";
   }
 }
 
-// Heuristic đoán ngôn ngữ summary cũ nếu chưa có summaryLang (backward compatible)
+function stripEmojis(text: string): string {
+  return text
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    .replace(/[\uFE0F\u200D]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function guessLang(text: string): "vi" | "en" | "ko" | "zh" {
   const s = text || "";
-  // Hangul
   if (/[ㄱ-ㅎ|ㅏ-ㅣ|가-힣]/.test(s)) return "ko";
-  // CJK
   if (/[\u4E00-\u9FFF]/.test(s)) return "zh";
-  // Mostly ASCII -> assume English
   const ascii = (s.match(/[A-Za-z]/g) || []).length;
   const nonAscii = (s.match(/[^\x00-\x7F]/g) || []).length;
   if (ascii > 20 && nonAscii < 5) return "en";
@@ -60,7 +59,11 @@ async function getEmbedding(text: string): Promise<number[] | null> {
       embeddingPipeline = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
     }
 
-    const output = await embeddingPipeline(text, { pooling: "mean", normalize: true });
+    const output = await embeddingPipeline(text, {
+      pooling: "mean",
+      normalize: true,
+    });
+
     return Array.from(output.data) as number[];
   } catch {
     return null;
@@ -118,67 +121,53 @@ async function callCerebras(
 }
 
 function systemGuidePrompt(lang: "vi" | "en" | "ko" | "zh") {
-  // ✅ ép ngôn ngữ rất mạnh
   switch (lang) {
     case "en":
       return `You are a friendly, knowledgeable tour guide in Vietnam.
 IMPORTANT: Reply ONLY in English. Even if context/documents are Vietnamese, translate and still reply in English.
-Keep it short (3–4 sentences), friendly, with emojis.`;
+Keep it short (3–4 sentences), friendly, natural, and DO NOT use emojis.`;
     case "ko":
       return `당신은 베트남의 친절하고 지식이 풍부한 여행 가이드입니다.
 중요: 반드시 한국어로만 답변하세요. 문서/맥락이 베트남어여도 한국어로 번역해 답변하세요.
-3~4문장으로 짧게, 친근하게, 이모지 포함.`;
+짧게 3~4문장, 자연스럽고 친절하게 답변하고 이모지는 사용하지 마세요.`;
     case "zh":
       return `你是一位友好且知识丰富的越南导游。
 重要：必须只用简体中文回答。即使上下文/资料是越南语，也要翻译后用中文回答。
-回答保持简短：3-4 句话，语气友好，可带 emoji。`;
+回答保持简短：3-4 句话，语气友好自然，不要使用 emoji。`;
     default:
       return `Bạn là hướng dẫn viên du lịch thân thiện và am hiểu tại Việt Nam.
 Quan trọng: BẮT BUỘC chỉ trả lời bằng tiếng Việt.
-Trả lời ngắn (3–4 câu), thân thiện, có emoji.`;
+Trả lời ngắn 3–4 câu, tự nhiên, thân thiện và không dùng emoji.`;
   }
 }
 
 function contextLabel(lang: "vi" | "en" | "ko" | "zh") {
   switch (lang) {
-    case "en":
-      return "CONVERSATION CONTEXT (summary):";
-    case "ko":
-      return "대화 맥락 (요약):";
-    case "zh":
-      return "对话上下文（摘要）：";
-    default:
-      return "NGỮ CẢNH HỘI THOẠI (tóm tắt):";
+    case "en": return "CONVERSATION CONTEXT (summary):";
+    case "ko": return "대화 맥락 (요약):";
+    case "zh": return "对话上下文（摘要）：";
+    default: return "NGỮ CẢNH HỘI THOẠI (tóm tắt):";
   }
 }
 
 function docsLabel(lang: "vi" | "en" | "ko" | "zh") {
   switch (lang) {
-    case "en":
-      return "REFERENCE DOCUMENTS (may be Vietnamese; translate if needed):";
-    case "ko":
-      return "참고 자료 (베트남어일 수 있음, 필요 시 번역):";
-    case "zh":
-      return "参考资料（可能是越南语，如需要请翻译）：";
-    default:
-      return "TÀI LIỆU THAM KHẢO (có thể là tiếng Việt):";
+    case "en": return "REFERENCE DOCUMENTS (may be Vietnamese; translate if needed):";
+    case "ko": return "참고 자료 (베트남어일 수 있음, 필요 시 번역):";
+    case "zh": return "参考资料（可能是越南语，如需要请翻译）：";
+    default: return "TÀI LIỆU THAM KHẢO (có thể là tiếng Việt):";
   }
 }
 
 function arrivalInstruction(lang: "vi" | "en" | "ko" | "zh") {
   switch (lang) {
-    case "en":
-      return "Tourist just ARRIVED. Welcome them and give a brief intro.";
-    case "ko":
-      return "관광객이 방금 도착했습니다. 환영 인사와 짧은 소개를 하세요.";
-    case "zh":
-      return "游客刚到。请欢迎并做简短介绍。";
-    default:
-      return "Khách vừa đến. Chào đón và giới thiệu ngắn.";
+    case "en": return "Tourist just ARRIVED. Welcome them and give a brief intro.";
+    case "ko": return "관광객이 방금 도착했습니다. 환영 인사와 짧은 소개를 하세요.";
+    case "zh": return "游客刚到。请欢迎并做简短介绍。";
+    default: return "Khách vừa đến. Chào đón và giới thiệu ngắn.";
   }
 }
 
-// ✅ NEW: translate/re-summary summary sang ngôn ngữ mới khi user đổi language
 async function translateSummary(
   existingSummary: string,
   targetLang: "vi" | "en" | "ko" | "zh"
@@ -190,6 +179,7 @@ Rules:
 - Keep the same meaning and facts.
 - Keep <= 150 words.
 - Do NOT add new info.
+- Do NOT use emojis.
 - Output ONLY the translated summary text.
 
 SUMMARY:
@@ -197,16 +187,15 @@ ${existingSummary}`;
 
   const result = await callCerebras(
     [
-      { role: "system", content: "You translate faithfully and concisely. Output only the translation." },
+      { role: "system", content: "You translate faithfully and concisely. Output only the translation. No emojis." },
       { role: "user", content: prompt },
     ],
     220
   );
 
-  return (result || "").trim();
+  return stripEmojis((result || "").trim());
 }
 
-// Summarize/merge: luôn output theo ngôn ngữ hiện tại
 async function summarize(
   newMessages: MemoryMessage[],
   existingSummary: string,
@@ -231,9 +220,11 @@ Task:
 - If NO important new info, output exactly: NO_UPDATE
 - Else output UPDATED summary in ${target}, <=150 words
 - Keep: places, user interests/preferences, key questions
+- Do NOT use emojis
 - Output ONLY summary text or NO_UPDATE`
     : `Create a compact tour conversation summary in ${target}, <=150 words.
 Keep: places, user interests/preferences, key questions.
+Do NOT use emojis.
 Output ONLY summary text.
 
 Conversation:
@@ -241,13 +232,13 @@ ${convo}`;
 
   const result = await callCerebras(
     [
-      { role: "system", content: "You are a precise summarizer. Follow instructions strictly." },
+      { role: "system", content: "You are a precise summarizer. Follow instructions strictly. No emojis." },
       { role: "user", content: prompt },
     ],
     220
   );
 
-  const cleaned = (result || "").trim();
+  const cleaned = stripEmojis((result || "").trim());
   if (cleaned === "NO_UPDATE" || cleaned.includes("NO_UPDATE")) return existingSummary;
   return cleaned;
 }
@@ -261,24 +252,19 @@ function normalizeMemory(memory: any): ConversationMemory {
   };
 }
 
-// ============================================
-// Main handler
-// ============================================
 export async function POST(req: NextRequest) {
   try {
-    const {
-      contextPrompt,
-      userQuestion,
-      locationId,
-      language = "vi",
-      conversationMemory,
-    } = await req.json();
+    const body = await req.json();
+
+    const contextPrompt = body.contextPrompt;
+    const userQuestion = body.userQuestion;
+    const locationId = body.locationId ?? null;
+    const language = normalizeLanguage(body.language);
+    const conversationMemory = body.conversationMemory;
 
     if (!process.env.CEREBRAS_API_KEY) {
       return NextResponse.json({ error: "CEREBRAS_API_KEY chưa cấu hình" }, { status: 500 });
     }
-
-    const lang = normalizeLanguage(language);
 
     const query = userQuestion || contextPrompt || "";
     if (!query) return NextResponse.json({ error: "Thiếu câu hỏi" }, { status: 400 });
@@ -286,43 +272,37 @@ export async function POST(req: NextRequest) {
     const isArrival = !!contextPrompt && !userQuestion;
     const memory = normalizeMemory(conversationMemory);
 
-    // ── Step 1: RAG ──
     let ragContext = "";
     const embedding = await getEmbedding(query);
     if (embedding) {
-      const docs = await searchDocuments(embedding, locationId || null);
+      const docs = await searchDocuments(embedding, locationId);
       if (docs.length > 0) {
         ragContext = docs.map((d, i) => `[${i + 1}] ${d}`).join("\n\n");
       }
     }
 
-    // ── Step 2: ensure summary matches selected language ──
     let summaryForPrompt = memory.summary;
-    let summaryLang = memory.summaryLang || (memory.summary ? guessLang(memory.summary) : lang);
+    let summaryLang = memory.summaryLang || (memory.summary ? guessLang(memory.summary) : language);
 
-    if (summaryForPrompt && summaryLang !== lang) {
+    if (summaryForPrompt && summaryLang !== language) {
       try {
-        // ✅ re-summary/translate summary sang ngôn ngữ mới
-        summaryForPrompt = await translateSummary(summaryForPrompt, lang);
-        summaryLang = lang;
-      } catch {
-        // nếu dịch fail thì vẫn dùng summary cũ, nhưng prompt vẫn ép output ngôn ngữ mới
-      }
+        summaryForPrompt = await translateSummary(summaryForPrompt, language);
+        summaryLang = language;
+      } catch {}
     }
 
-    // ── Step 3: Build prompt ──
     const systemParts: string[] = [];
-    systemParts.push(systemGuidePrompt(lang));
+    systemParts.push(systemGuidePrompt(language));
 
     if (summaryForPrompt) {
-      systemParts.push(`${contextLabel(lang)}\n${summaryForPrompt}`);
+      systemParts.push(`${contextLabel(language)}\n${summaryForPrompt}`);
     }
 
     if (ragContext) {
-      systemParts.push(`${docsLabel(lang)}\n${ragContext}\n(Do not invent info not in documents.)`);
+      systemParts.push(`${docsLabel(language)}\n${ragContext}\n(Do not invent info not in documents.)`);
     }
 
-    if (isArrival) systemParts.push(arrivalInstruction(lang));
+    if (isArrival) systemParts.push(arrivalInstruction(language));
 
     const systemContent = systemParts.filter(Boolean).join("\n\n");
 
@@ -334,36 +314,29 @@ export async function POST(req: NextRequest) {
       { role: "user", content: query },
     ];
 
-    // ── Step 4: Call LLM ──
-    const reply = await callCerebras(messages);
+    const rawReply = await callCerebras(messages);
+    const reply = stripEmojis(rawReply);
 
-    // ── Step 5: Update memory ──
     const newPair: MemoryMessage[] = [
       { role: "user", content: query },
       { role: "assistant", content: reply },
     ];
 
     let nextRecentMessages = [...memory.recentMessages, ...newPair];
-
-    // important: nếu vừa translate summary, dùng summary mới làm base
     let updatedSummary = summaryForPrompt || "";
     let didSummarize = false;
 
     try {
-      // First summary after first 3 turns (6 messages)
       if (!updatedSummary && nextRecentMessages.length >= 6) {
-        updatedSummary = await summarize(nextRecentMessages, "", lang);
+        updatedSummary = await summarize(nextRecentMessages, "", language);
         nextRecentMessages = [];
         didSummarize = true;
-      }
-      // Incremental update each turn after summary exists
-      else if (updatedSummary && nextRecentMessages.length >= 2) {
-        updatedSummary = await summarize(nextRecentMessages, updatedSummary, lang);
+      } else if (updatedSummary && nextRecentMessages.length >= 2) {
+        updatedSummary = await summarize(nextRecentMessages, updatedSummary, language);
         nextRecentMessages = [];
         didSummarize = true;
       }
     } catch {
-      // keep updatedSummary as-is
       didSummarize = false;
     }
 
@@ -374,7 +347,7 @@ export async function POST(req: NextRequest) {
         recentMessages: nextRecentMessages,
         messageCount: (memory.messageCount || 0) + 1,
         didSummarize,
-        summaryLang: lang, // ✅ NEW
+        summaryLang: language,
       },
     });
   } catch (error: any) {
