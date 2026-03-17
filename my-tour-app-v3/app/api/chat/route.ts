@@ -90,15 +90,128 @@ async function callCerebras(
   return data.choices?.[0]?.message?.content || "";
 }
 
+function getLanguageLabel(language: string) {
+  switch (language) {
+    case 'en':
+      return 'English';
+    case 'ko':
+      return '한국어';
+    case 'zh':
+      return '中文';
+    case 'vi':
+    default:
+      return 'tiếng Việt';
+  }
+}
+
+function getRoleNames(language: string) {
+  switch (language) {
+    case 'en':
+      return { user: 'Tourist', ai: 'Guide' };
+    case 'ko':
+      return { user: '관광객', ai: '가이드' };
+    case 'zh':
+      return { user: '游客', ai: '导游' };
+    case 'vi':
+    default:
+      return { user: 'Khách', ai: 'AI' };
+  }
+}
+
+function getSystemGuidePrompt(language: string) {
+  switch (language) {
+    case 'en':
+      return 'You are a friendly, knowledgeable tour guide in Vietnam.';
+    case 'ko':
+      return '당신은 베트남의 친절하고 박식한 여행 가이드입니다.';
+    case 'zh':
+      return '你是一位友好且知识丰富的越南导游。';
+    case 'vi':
+    default:
+      return 'Bạn là hướng dẫn viên du lịch thân thiện và am hiểu tại Việt Nam.';
+  }
+}
+
+function getContextLabel(language: string) {
+  switch (language) {
+    case 'en':
+      return 'CONVERSATION CONTEXT (what tourist already asked):';
+    case 'ko':
+      return '대화 맥락 (관광객이 이전에 물어본 내용):';
+    case 'zh':
+      return '对话上下文（游客之前问过的内容）：';
+    case 'vi':
+    default:
+      return 'NGỮ CẢNH HỘI THOẠI (khách đã hỏi gì):';
+  }
+}
+
+function getReferenceLabel(language: string) {
+  switch (language) {
+    case 'en':
+      return 'REFERENCE DOCUMENTS';
+    case 'ko':
+      return '참고 자료';
+    case 'zh':
+      return '参考资料';
+    case 'vi':
+    default:
+      return 'TÀI LIỆU THAM KHẢO';
+  }
+}
+
+function getNoHallucinationInstruction(language: string) {
+  switch (language) {
+    case 'en':
+      return 'Do not invent info not in documents.';
+    case 'ko':
+      return '문서에 없는 내용은 지어내지 마세요.';
+    case 'zh':
+      return '不要编造资料中没有的信息。';
+    case 'vi':
+    default:
+      return 'Không bịa thêm thông tin.';
+  }
+}
+
+function getReplyInstruction(language: string) {
+  switch (language) {
+    case 'en':
+      return 'Reply in English, 3-4 sentences, friendly with emojis.';
+    case 'ko':
+      return '한국어로 3~4문장, 친절하고 자연스럽게, 이모지도 포함해서 답변하세요.';
+    case 'zh':
+      return '请用中文回答，3到4句话，语气友好，并带一点 emoji。';
+    case 'vi':
+    default:
+      return 'Trả lời tiếng Việt, 3-4 câu, thân thiện, có emoji.';
+  }
+}
+
+function getArrivalInstruction(language: string) {
+  switch (language) {
+    case 'en':
+      return 'Tourist just ARRIVED - welcome and brief intro.';
+    case 'ko':
+      return '관광객이 방금 도착했습니다. 짧게 환영하고 소개하세요.';
+    case 'zh':
+      return '游客刚刚到达，请简短欢迎并介绍一下。';
+    case 'vi':
+    default:
+      return 'Khách vừa ĐẾN - chào đón và giới thiệu ngắn.';
+  }
+}
+
 async function summarize(
   newMessages: MemoryMessage[],
   existingSummary: string,
   language: string
 ): Promise<string> {
-  const lang = language === "vi" ? "tiếng Việt" : "English";
+  const lang = getLanguageLabel(language);
+  const roleNames = getRoleNames(language);
 
   const convo = newMessages
-    .map((m) => `${m.role === "user" ? "Khách" : "AI"}: ${m.content}`)
+    .map((m) => `${m.role === "user" ? roleNames.user : roleNames.ai}: ${m.content}`)
     .join("\n");
 
   const prompt = existingSummary
@@ -178,7 +291,6 @@ export async function POST(req: NextRequest) {
     const isArrival = !!contextPrompt && !userQuestion;
     const memory = normalizeMemory(conversationMemory);
 
-    // ── Bước 1: RAG ──
     let ragContext = "";
     const embedding = await getEmbedding(query);
 
@@ -190,38 +302,24 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ── Bước 2: Build prompt gửi Cerebras ──
     const systemContent = [
-      language === "en"
-        ? "You are a friendly, knowledgeable tour guide in Vietnam."
-        : "Bạn là hướng dẫn viên du lịch thân thiện và am hiểu tại Việt Nam.",
+      getSystemGuidePrompt(language),
 
       memory.summary
-        ? language === "en"
-          ? `\nCONVERSATION CONTEXT (what tourist already asked):\n${memory.summary}`
-          : `\nNGỮ CẢNH HỘI THOẠI (khách đã hỏi gì):\n${memory.summary}`
+        ? `\n${getContextLabel(language)}\n${memory.summary}`
         : "",
 
       ragContext
-        ? language === "en"
-          ? `\nREFERENCE DOCUMENTS:\n${ragContext}\nDo not invent info not in documents.`
-          : `\nTÀI LIỆU THAM KHẢO:\n${ragContext}\nKhông bịa thêm thông tin.`
+        ? `\n${getReferenceLabel(language)}:\n${ragContext}\n${getNoHallucinationInstruction(language)}`
         : "",
 
-      language === "en"
-        ? "Reply in English, 3-4 sentences, friendly with emojis."
-        : "Trả lời tiếng Việt, 3-4 câu, thân thiện, có emoji.",
+      getReplyInstruction(language),
 
-      isArrival
-        ? language === "en"
-          ? "Tourist just ARRIVED - welcome and brief intro."
-          : "Khách vừa ĐẾN - chào đón và giới thiệu ngắn."
-        : "",
+      isArrival ? getArrivalInstruction(language) : "",
     ]
       .filter(Boolean)
       .join("\n");
 
-    // Gửi thêm một ít context ngắn hạn gần nhất
     const recentToSend = memory.recentMessages.slice(-4);
 
     const messages = [
@@ -230,10 +328,8 @@ export async function POST(req: NextRequest) {
       { role: "user", content: query },
     ];
 
-    // ── Bước 3: Gọi Cerebras ──
     const reply = await callCerebras(messages);
 
-    // ── Bước 4: Update memory ──
     const newPair: MemoryMessage[] = [
       { role: "user", content: query },
       { role: "assistant", content: reply },
@@ -244,16 +340,13 @@ export async function POST(req: NextRequest) {
     let didSummarize = false;
 
     try {
-      // Chưa có summary -> đủ 3 cặp đầu tiên thì tạo summary đầu tiên
       if (!memory.summary && nextRecentMessages.length >= 6) {
         console.log("🔄 Creating first summary from first 3 turns...");
         updatedSummary = await summarize(nextRecentMessages, "", language);
         nextRecentMessages = [];
         didSummarize = true;
         console.log(`✅ First summary created: "${updatedSummary.substring(0, 80)}..."`);
-      }
-      // Đã có summary -> mỗi lượt mới đều merge dần
-      else if (memory.summary && nextRecentMessages.length >= 2) {
+      } else if (memory.summary && nextRecentMessages.length >= 2) {
         console.log("🔄 Incrementally updating summary...");
         updatedSummary = await summarize(nextRecentMessages, memory.summary, language);
         nextRecentMessages = [];
@@ -266,7 +359,6 @@ export async function POST(req: NextRequest) {
       didSummarize = false;
     }
 
-    // ── Bước 5: Trả về reply + memory update ──
     return NextResponse.json({
       reply,
       memoryUpdate: {
