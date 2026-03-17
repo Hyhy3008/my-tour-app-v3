@@ -1,3 +1,4 @@
+// app/api/chat/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 let embeddingPipeline: any = null;
@@ -24,18 +25,26 @@ function normalizeLanguage(input: any): "vi" | "en" | "ko" | "zh" {
 
 function langName(lang: "vi" | "en" | "ko" | "zh") {
   switch (lang) {
-    case "en": return "English";
-    case "ko": return "Korean";
-    case "zh": return "Chinese (Simplified)";
-    default: return "Vietnamese";
+    case "en":
+      return "English";
+    case "ko":
+      return "Korean";
+    case "zh":
+      return "Chinese (Simplified)";
+    default:
+      return "Vietnamese";
   }
 }
 
+// ✅ Tương thích build, không dùng \p{...}
 function stripEmojis(text: string): string {
   return text
-    .replace(/\p{Extended_Pictographic}/gu, "")
-    .replace(/[\uFE0F\u200D]/g, "")
-    .replace(/\s{2,}/g, " ")
+    .replace(/[\u2600-\u27BF]/g, '')
+    .replace(/\uD83C[\uDF00-\uDFFF]/g, '')
+    .replace(/\uD83D[\uDC00-\uDFFF]/g, '')
+    .replace(/\uD83E[\uDD00-\uDFFF]/g, '')
+    .replace(/[\uFE0F\u200D]/g, '')
+    .replace(/\s{2,}/g, ' ')
     .trim();
 }
 
@@ -272,6 +281,7 @@ export async function POST(req: NextRequest) {
     const isArrival = !!contextPrompt && !userQuestion;
     const memory = normalizeMemory(conversationMemory);
 
+    // ── Bước 1: RAG ──
     let ragContext = "";
     const embedding = await getEmbedding(query);
     if (embedding) {
@@ -281,6 +291,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ── Bước 2: Nếu đổi ngôn ngữ, translate/re-summary summary cũ sang ngôn ngữ mới ──
     let summaryForPrompt = memory.summary;
     let summaryLang = memory.summaryLang || (memory.summary ? guessLang(memory.summary) : language);
 
@@ -291,6 +302,7 @@ export async function POST(req: NextRequest) {
       } catch {}
     }
 
+    // ── Bước 3: Build prompt ──
     const systemParts: string[] = [];
     systemParts.push(systemGuidePrompt(language));
 
@@ -314,9 +326,11 @@ export async function POST(req: NextRequest) {
       { role: "user", content: query },
     ];
 
+    // ── Bước 4: Gọi LLM ──
     const rawReply = await callCerebras(messages);
     const reply = stripEmojis(rawReply);
 
+    // ── Bước 5: Update memory ──
     const newPair: MemoryMessage[] = [
       { role: "user", content: query },
       { role: "assistant", content: reply },
@@ -327,11 +341,14 @@ export async function POST(req: NextRequest) {
     let didSummarize = false;
 
     try {
+      // Tạo summary đầu tiên sau 3 turns
       if (!updatedSummary && nextRecentMessages.length >= 6) {
         updatedSummary = await summarize(nextRecentMessages, "", language);
         nextRecentMessages = [];
         didSummarize = true;
-      } else if (updatedSummary && nextRecentMessages.length >= 2) {
+      }
+      // Sau đó mỗi turn mới sẽ merge dần
+      else if (updatedSummary && nextRecentMessages.length >= 2) {
         updatedSummary = await summarize(nextRecentMessages, updatedSummary, language);
         nextRecentMessages = [];
         didSummarize = true;
