@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, MicOff, Loader2, X, MessageCircle, Radio, Square } from 'lucide-react';
+import { Mic, MicOff, Loader2, X, MessageCircle, Radio, Square, Send, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface ConversationMemory {
   summary: string;
@@ -59,6 +59,8 @@ const textMap = {
     listeningPause: '🔴 Đang nghe... (dừng 2s để gửi)',
     waitingForYou: '⏳ Chờ bạn nói...',
     tapAgainToStop: 'Bấm lại để dừng',
+    typePlaceholder: 'Nhập câu hỏi...',
+    send: 'Gửi',
   },
   en: {
     ask: 'Ask',
@@ -79,6 +81,8 @@ const textMap = {
     listeningPause: '🔴 Listening... (pause 2s to send)',
     waitingForYou: '⏳ Waiting for you...',
     tapAgainToStop: 'Tap again to stop',
+    typePlaceholder: 'Type your question...',
+    send: 'Send',
   },
   ko: {
     ask: '질문하기',
@@ -99,6 +103,8 @@ const textMap = {
     listeningPause: '🔴 듣는 중... (2초 멈추면 전송)',
     waitingForYou: '⏳ 말씀을 기다리는 중...',
     tapAgainToStop: '다시 눌러 중지',
+    typePlaceholder: '질문을 입력하세요...',
+    send: '보내기',
   },
   zh: {
     ask: '问答',
@@ -119,11 +125,14 @@ const textMap = {
     listeningPause: '🔴 正在聆听...（停顿 2 秒发送）',
     waitingForYou: '⏳ 等你说话...',
     tapAgainToStop: '再次点击可停止',
+    typePlaceholder: '输入你的问题...',
+    send: '发送',
   },
 };
 
 export default function VoiceChat({ language, isMuted, locationId, memory, onMemoryUpdate }: Props) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
   const [mode, setMode] = useState<ChatMode>('ask');
   const [isListening, setIsListening] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
@@ -132,6 +141,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState('');
   const [freeTalkActive, setFreeTalkActive] = useState(false);
+  const [textInput, setTextInput] = useState('');
 
   const recognitionRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -145,11 +155,10 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
   const freeTalkActiveRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Free talk guards
   const ftSentRef = useRef(false);
   const isPlayingRef = useRef(false);
 
-  // ✅ ASK MODE refs mới
+  // ASK MODE refs
   const askTranscriptRef = useRef('');
   const askShouldSendRef = useRef(false);
   const askHasSentRef = useRef(false);
@@ -178,7 +187,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     setIsSpeaking(false);
   }, []);
 
-  const speakText = useCallback(async (text: string, onDone?: () => void) => {
+  const speakText = useCallback(async (textToSpeak: string, onDone?: () => void) => {
     if (isMutedRef.current) {
       onDone?.();
       return;
@@ -190,7 +199,7 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, language: languageRef.current }),
+        body: JSON.stringify({ text: textToSpeak, language: languageRef.current }),
       });
 
       if (!res.ok) {
@@ -203,7 +212,6 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       const audio = new Audio(url);
       audioRef.current = audio;
 
-      // ✅ tốc độ đọc 1.2x
       audio.playbackRate = 1.2;
 
       isPlayingRef.current = true;
@@ -279,13 +287,38 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     }
   }, [speakText, stopPageAudio]);
 
+  // ✅ gửi text thủ công
+  const sendTextMessage = useCallback(() => {
+    const textToSend = textInput.trim();
+    if (!textToSend || isThinking) return;
+
+    if (freeTalkActiveRef.current) {
+      setFreeTalkActive(false);
+      ftSentRef.current = true;
+      if (recognitionRef.current && isStartedRef.current) {
+        try { recognitionRef.current.stop(); } catch {}
+      }
+    }
+
+    setTextInput('');
+    stopPageAudio();
+    stopAudio();
+    askAI(textToSend, false);
+  }, [textInput, isThinking, askAI, stopAudio, stopPageAudio]);
+
   // ASK MODE
-  const startAskListening = useCallback(() => {
+  const startAskListening = useCallback((e?: React.PointerEvent<HTMLButtonElement>) => {
     stopPageAudio();
     stopAudio();
 
     if (isThinking) return;
     if (isListening) return;
+
+    if (e?.currentTarget && 'setPointerCapture' in e.currentTarget) {
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {}
+    }
 
     setError('');
     setTranscript('');
@@ -342,7 +375,6 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
       isStartedRef.current = false;
       setIsListening(false);
 
-      // ✅ CHỈ gửi khi user đã nhả nút
       if (askShouldSendRef.current && !askHasSentRef.current) {
         const finalText = askTranscriptRef.current.trim();
         if (finalText.length > 0) {
@@ -510,8 +542,10 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
     stopAudio();
     setFreeTalkActive(false);
     setIsOpen(false);
+    setIsMinimized(false);
     setMessages([]);
     setTranscript('');
+    setTextInput('');
     setError('');
     isStartedRef.current = false;
   };
@@ -553,9 +587,18 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
                     </span>
                   )}
                 </div>
-                <button onClick={handleClose} className="text-white/80 hover:text-white">
-                  <X size={20} />
-                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIsMinimized(prev => !prev)}
+                    className="text-white/80 hover:text-white"
+                  >
+                    {isMinimized ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                  </button>
+                  <button onClick={handleClose} className="text-white/80 hover:text-white">
+                    <X size={20} />
+                  </button>
+                </div>
               </div>
 
               <div className="flex gap-2">
@@ -583,162 +626,185 @@ export default function VoiceChat({ language, isMuted, locationId, memory, onMem
               </div>
             </div>
 
-            {/* Messages */}
-            <div className="h-44 overflow-y-auto px-4 py-3 space-y-2 bg-gray-50">
-              {messages.length === 0 && (
-                <div className="flex flex-col items-center justify-center h-full text-center gap-2">
-                  {mode === 'ask' ? (
-                    <>
-                      <MessageCircle size={28} className="text-purple-300" />
-                      <p className="text-gray-400 text-xs">{text.holdToAsk}</p>
-                    </>
-                  ) : (
-                    <>
-                      <Radio size={28} className="text-purple-300" />
-                      <p className="text-gray-400 text-xs whitespace-pre-line">{text.freeTalkHint}</p>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {messages.map((m, i) => (
-                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div
-                    className={`max-w-[85%] px-3 py-2 rounded-2xl text-sm ${
-                      m.role === 'user'
-                        ? 'bg-purple-500 text-white'
-                        : 'bg-white border border-gray-200 text-gray-800'
-                    }`}
-                  >
-                    {m.content}
-                  </div>
-                </div>
-              ))}
-
-              {isThinking && (
-                <div className="flex justify-start">
-                  <div className="bg-white border border-gray-200 px-3 py-2 rounded-2xl flex items-center gap-2">
-                    <Loader2 size={14} className="animate-spin text-purple-500" />
-                    <span className="text-xs text-gray-500">{text.thinking}</span>
-                  </div>
-                </div>
-              )}
-
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Transcript */}
-            {(isListening || transcript) && (
-              <div className="px-4 py-2 bg-purple-50 border-t border-purple-100">
-                <p className="text-xs text-purple-600 flex items-center gap-1.5">
-                  {isListening && (
-                    <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse inline-block shrink-0" />
-                  )}
-                  <span className="truncate">{transcript || text.listening}</span>
-                </p>
-              </div>
-            )}
-
-            {/* Error */}
-            {error && (
-              <div className="px-4 py-2 bg-red-50 border-t border-red-100">
-                <p className="text-xs text-red-500">{error}</p>
-              </div>
-            )}
-
-            {/* Controls */}
-            <div className="px-4 py-4 border-t border-gray-100 bg-white">
-              {mode === 'ask' ? (
-                <div className="flex flex-col items-center gap-2">
-                  <button
-                    onPointerDown={startAskListening}
-                    onPointerUp={stopAskListening}
-                    onPointerLeave={stopAskListening}
-                    disabled={isThinking}
-                    className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 select-none touch-none ${
-                      buttonState === 'listening'
-                        ? 'bg-red-500 text-white scale-110 animate-pulse'
-                        : buttonState === 'thinking'
-                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                        : buttonState === 'speaking'
-                        ? 'bg-gradient-to-br from-green-400 to-emerald-500 text-white'
-                        : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white'
-                    }`}
-                  >
-                    {buttonState === 'thinking' ? (
-                      <Loader2 size={36} className="animate-spin" />
-                    ) : buttonState === 'listening' ? (
-                      <MicOff size={36} />
-                    ) : buttonState === 'speaking' ? (
-                      <Square size={36} />
-                    ) : (
-                      <Mic size={36} />
-                    )}
-                  </button>
-
-                  <p className="text-xs text-gray-400 text-center">
-                    {buttonState === 'listening' ? (
-                      <span className="text-red-500 font-medium">{text.releaseToSend}</span>
-                    ) : buttonState === 'thinking' ? (
-                      <span>{text.processing}</span>
-                    ) : buttonState === 'speaking' ? (
-                      <span className="text-green-600 font-medium">{text.holdToInterrupt}</span>
-                    ) : (
-                      <span>{text.holdToSpeak}</span>
-                    )}
-                  </p>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center gap-2">
-                  <button
-                    onClick={toggleFreeTalk}
-                    disabled={isThinking}
-                    className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 ${
-                      freeTalkActive
-                        ? 'bg-gradient-to-br from-green-400 to-emerald-500 text-white'
-                        : isThinking
-                        ? 'bg-gray-200 text-gray-400'
-                        : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white'
-                    }`}
-                  >
-                    {isThinking ? (
-                      <Loader2 size={36} className="animate-spin" />
-                    ) : freeTalkActive ? (
-                      isListening ? (
-                        <Mic size={36} className="animate-pulse" />
-                      ) : isSpeaking ? (
-                        <Square size={36} className="animate-pulse" />
+            {!isMinimized && (
+              <>
+                {/* Messages */}
+                <div className="h-44 overflow-y-auto px-4 py-3 space-y-2 bg-gray-50">
+                  {messages.length === 0 && (
+                    <div className="flex flex-col items-center justify-center h-full text-center gap-2">
+                      {mode === 'ask' ? (
+                        <>
+                          <MessageCircle size={28} className="text-purple-300" />
+                          <p className="text-gray-400 text-xs">{text.holdToAsk}</p>
+                        </>
                       ) : (
-                        <Radio size={36} className="animate-pulse" />
-                      )
-                    ) : (
-                      <Radio size={36} />
-                    )}
-                  </button>
+                        <>
+                          <Radio size={28} className="text-purple-300" />
+                          <p className="text-gray-400 text-xs whitespace-pre-line">{text.freeTalkHint}</p>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {messages.map((m, i) => (
+                    <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[85%] px-3 py-2 rounded-2xl text-sm ${
+                        m.role === 'user'
+                          ? 'bg-purple-500 text-white'
+                          : 'bg-white border border-gray-200 text-gray-800'
+                      }`}>
+                        {m.content}
+                      </div>
+                    </div>
+                  ))}
+                  {isThinking && (
+                    <div className="flex justify-start">
+                      <div className="bg-white border border-gray-200 px-3 py-2 rounded-2xl flex items-center gap-2">
+                        <Loader2 size={14} className="animate-spin text-purple-500" />
+                        <span className="text-xs text-gray-500">{text.thinking}</span>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
 
-                  <p className="text-xs text-center font-medium">
-                    {isThinking ? (
-                      <span className="text-gray-400">{text.aiThinking}</span>
-                    ) : freeTalkActive ? (
-                      <span className="text-green-600">
-                        {isSpeaking
-                          ? text.aiSpeakingInterrupt
-                          : isListening
-                          ? text.listeningPause
-                          : text.waitingForYou}
-                      </span>
-                    ) : (
-                      <span className="text-gray-400">{text.startTalking}</span>
-                    )}
-                  </p>
+                {/* Transcript */}
+                {(isListening || transcript) && (
+                  <div className="px-4 py-2 bg-purple-50 border-t border-purple-100">
+                    <p className="text-xs text-purple-600 flex items-center gap-1.5">
+                      {isListening && (
+                        <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse inline-block shrink-0" />
+                      )}
+                      <span className="truncate">{transcript || text.listening}</span>
+                    </p>
+                  </div>
+                )}
 
-                  {freeTalkActive && (
-                    <p className="text-xs text-gray-400">{text.tapAgainToStop}</p>
+                {/* Error */}
+                {error && (
+                  <div className="px-4 py-2 bg-red-50 border-t border-red-100">
+                    <p className="text-xs text-red-500">{error}</p>
+                  </div>
+                )}
+
+                {/* ✅ Text input */}
+                <div className="px-4 py-3 border-t border-gray-100 bg-white">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={textInput}
+                      onChange={(e) => setTextInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          sendTextMessage();
+                        }
+                      }}
+                      placeholder={text.typePlaceholder}
+                      className="flex-1 px-4 py-3 rounded-2xl border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-purple-400"
+                    />
+                    <button
+                      onClick={sendTextMessage}
+                      disabled={!textInput.trim() || isThinking}
+                      className="w-12 h-12 rounded-2xl bg-purple-500 text-white flex items-center justify-center disabled:opacity-40"
+                    >
+                      <Send size={18} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Controls */}
+                <div className="px-4 py-4 border-t border-gray-100 bg-white">
+                  {mode === 'ask' ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <button
+                        onPointerDown={startAskListening}
+                        onPointerUp={stopAskListening}
+                        onPointerCancel={stopAskListening}
+                        onContextMenu={(e) => e.preventDefault()}
+                        disabled={isThinking}
+                        className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 select-none touch-none ${
+                          buttonState === 'listening'
+                            ? 'bg-red-500 text-white scale-110 animate-pulse'
+                            : buttonState === 'thinking'
+                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                            : buttonState === 'speaking'
+                            ? 'bg-gradient-to-br from-green-400 to-emerald-500 text-white'
+                            : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white'
+                        }`}
+                      >
+                        {buttonState === 'thinking' ? (
+                          <Loader2 size={36} className="animate-spin" />
+                        ) : buttonState === 'listening' ? (
+                          <MicOff size={36} />
+                        ) : buttonState === 'speaking' ? (
+                          <Square size={36} />
+                        ) : (
+                          <Mic size={36} />
+                        )}
+                      </button>
+
+                      <p className="text-xs text-gray-400 text-center">
+                        {buttonState === 'listening' ? (
+                          <span className="text-red-500 font-medium">{text.releaseToSend}</span>
+                        ) : buttonState === 'thinking' ? (
+                          <span>{text.processing}</span>
+                        ) : buttonState === 'speaking' ? (
+                          <span className="text-green-600 font-medium">{text.holdToInterrupt}</span>
+                        ) : (
+                          <span>{text.holdToSpeak}</span>
+                        )}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2">
+                      <button
+                        onClick={toggleFreeTalk}
+                        disabled={isThinking}
+                        className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 ${
+                          freeTalkActive
+                            ? 'bg-gradient-to-br from-green-400 to-emerald-500 text-white'
+                            : isThinking
+                            ? 'bg-gray-200 text-gray-400'
+                            : 'bg-gradient-to-br from-purple-500 to-pink-500 text-white'
+                        }`}
+                      >
+                        {isThinking ? (
+                          <Loader2 size={36} className="animate-spin" />
+                        ) : freeTalkActive ? (
+                          isListening
+                            ? <Mic size={36} className="animate-pulse" />
+                            : isSpeaking
+                            ? <Square size={36} className="animate-pulse" />
+                            : <Radio size={36} className="animate-pulse" />
+                        ) : (
+                          <Radio size={36} />
+                        )}
+                      </button>
+
+                      <p className="text-xs text-center font-medium">
+                        {isThinking ? (
+                          <span className="text-gray-400">{text.aiThinking}</span>
+                        ) : freeTalkActive ? (
+                          <span className="text-green-600">
+                            {isSpeaking
+                              ? text.aiSpeakingInterrupt
+                              : isListening
+                              ? text.listeningPause
+                              : text.waitingForYou}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">{text.startTalking}</span>
+                        )}
+                      </p>
+
+                      {freeTalkActive && (
+                        <p className="text-xs text-gray-400">{text.tapAgainToStop}</p>
+                      )}
+                    </div>
                   )}
                 </div>
-              )}
-            </div>
-
+              </>
+            )}
           </div>
         </div>
       )}
