@@ -1,9 +1,10 @@
-// app/api/tts/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 const VOICES: Record<string, string> = {
   vi: "vi-VN-HoaiMyNeural",
   en: "en-US-JennyNeural",
+  ko: "ko-KR-SunHiNeural",
+  zh: "zh-CN-XiaoxiaoNeural",
 };
 
 function randomHex(length: number): string {
@@ -12,7 +13,6 @@ function randomHex(length: number): string {
   ).join("");
 }
 
-// Ghép nhiều ArrayBuffer thành 1
 function concatBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
   const total = buffers.reduce((sum, b) => sum + b.byteLength, 0);
   const result = new Uint8Array(total);
@@ -24,11 +24,9 @@ function concatBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
   return result.buffer;
 }
 
-// Chia text thành các đoạn nhỏ theo câu, mỗi đoạn max maxLen ký tự
 function splitText(text: string, maxLen = 180): string[] {
-  // Tách theo dấu câu: . ! ? \n
   const sentences = text
-    .split(/(?<=[.!?\n])\s+/)
+    .split(/(?<=[.!?\n。！？])\s+/)
     .map(s => s.trim())
     .filter(s => s.length > 0);
 
@@ -40,7 +38,6 @@ function splitText(text: string, maxLen = 180): string[] {
       current = (current + " " + sentence).trim();
     } else {
       if (current) chunks.push(current);
-      // Nếu 1 câu vẫn quá dài → cắt cứng
       if (sentence.length > maxLen) {
         for (let i = 0; i < sentence.length; i += maxLen) {
           chunks.push(sentence.slice(i, i + maxLen));
@@ -51,15 +48,44 @@ function splitText(text: string, maxLen = 180): string[] {
       }
     }
   }
+
   if (current) chunks.push(current);
   return chunks;
 }
 
-// Google TTS cho 1 đoạn nhỏ
+function getGoogleLang(language: string) {
+  switch (language) {
+    case 'en':
+      return 'en';
+    case 'ko':
+      return 'ko';
+    case 'zh':
+      return 'zh-CN';
+    case 'vi':
+    default:
+      return 'vi';
+  }
+}
+
+function getXmlLang(language: string) {
+  switch (language) {
+    case 'en':
+      return 'en-US';
+    case 'ko':
+      return 'ko-KR';
+    case 'zh':
+      return 'zh-CN';
+    case 'vi':
+    default:
+      return 'vi-VN';
+  }
+}
+
 async function googleTTSChunk(chunk: string, lang: string): Promise<ArrayBuffer | null> {
   try {
-    const gl = lang === "vi" ? "vi" : "en";
+    const gl = getGoogleLang(lang);
     const encoded = encodeURIComponent(chunk);
+
     const r = await fetch(
       `https://translate.google.com/translate_tts?ie=UTF-8&q=${encoded}&tl=${gl}&client=tw-ob`,
       {
@@ -69,6 +95,7 @@ async function googleTTSChunk(chunk: string, lang: string): Promise<ArrayBuffer 
         },
       }
     );
+
     if (!r.ok) return null;
     const buf = await r.arrayBuffer();
     return buf.byteLength > 0 ? buf : null;
@@ -77,14 +104,14 @@ async function googleTTSChunk(chunk: string, lang: string): Promise<ArrayBuffer 
   }
 }
 
-// Edge TTS toàn bộ text (không giới hạn ký tự)
 async function edgeTTS(text: string, voice: string, lang: string): Promise<ArrayBuffer | null> {
   try {
     const safeText = text
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
-    const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${lang === "vi" ? "vi-VN" : "en-US"}'><voice name='${voice}'><prosody rate='0%' pitch='0%'>${safeText}</prosody></voice></speak>`;
+
+    const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${getXmlLang(lang)}'><voice name='${voice}'><prosody rate='0%' pitch='0%'>${safeText}</prosody></voice></speak>`;
 
     const r = await fetch(
       "https://tts.trafficmanager.net/cognitiveservices/v1?TrafficType=AzureDemo",
@@ -101,6 +128,7 @@ async function edgeTTS(text: string, voice: string, lang: string): Promise<Array
         body: ssml,
       }
     );
+
     if (!r.ok) return null;
     const buf = await r.arrayBuffer();
     return buf.byteLength > 0 ? buf : null;
@@ -112,11 +140,14 @@ async function edgeTTS(text: string, voice: string, lang: string): Promise<Array
 export async function POST(req: NextRequest) {
   try {
     const { text, language = "vi" } = await req.json();
-    if (!text) return NextResponse.json({ error: "No text" }, { status: 400 });
+
+    if (!text) {
+      return NextResponse.json({ error: "No text" }, { status: 400 });
+    }
 
     const voice = VOICES[language] || VOICES.vi;
 
-    // ── Thử 1: Edge TTS - đọc toàn bộ không giới hạn ──
+    // Ưu tiên Edge TTS
     const edgeBuf = await edgeTTS(text, voice, language);
     if (edgeBuf) {
       return new NextResponse(edgeBuf, {
@@ -124,9 +155,9 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ── Thử 2: Google TTS - chia nhỏ rồi ghép lại ──
+    // Fallback Google TTS
     const chunks = splitText(text, 180);
-    console.log(`Google TTS fallback: ${chunks.length} chunks`);
+    console.log(`Google TTS fallback: ${chunks.length} chunks, lang=${language}`);
 
     const buffers: ArrayBuffer[] = [];
     for (const chunk of chunks) {
@@ -142,7 +173,6 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ error: "All TTS providers failed" }, { status: 500 });
-
   } catch (error: any) {
     console.error("TTS Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
