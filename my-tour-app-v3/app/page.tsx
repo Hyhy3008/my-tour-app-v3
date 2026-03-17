@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { Navigation, MapPin, Volume2, VolumeX, CheckCircle, X, Map, ShoppingBag, Globe } from 'lucide-react';
+import { Navigation, MapPin, Volume2, VolumeX, X, Map, ShoppingBag, Globe } from 'lucide-react';
 import ShopTab from '@/components/ShopTab';
 import VoiceChat from '@/components/VoiceChat';
 
@@ -15,13 +15,17 @@ const MapContainer = dynamic(() => import('@/components/MapContainer'), {
   ),
 });
 
-interface Message { role: 'ai' | 'system'; content: string; time: string; }
+interface Message {
+  role: 'ai' | 'system';
+  content: string;
+  time: string;
+}
 
 interface ConversationMemory {
   summary: string;
   recentMessages: { role: string; content: string }[];
   messageCount: number;
-  summaryLang?: 'vi' | 'en' | 'ko' | 'zh'; // ✅ NEW: để server biết summary đang ở ngôn ngữ nào
+  summaryLang?: 'vi' | 'en' | 'ko' | 'zh';
 }
 
 interface StoredConversationMemory {
@@ -42,48 +46,92 @@ const emptyMemory = (): ConversationMemory => ({
 
 const translations = {
   vi: {
-    tour: 'Tour', shop: 'Mua sắm', tracking: 'Đang theo dõi', waiting: 'Chờ kích hoạt',
-    points: 'điểm', navigatingTo: 'Đang dẫn đường đến', km: 'km', min: 'phút',
-    welcome: 'Chào mừng!', tapToStart: 'Bấm Navigation để bắt đầu tour',
-    startTour: '🚀 Bắt đầu tour! Di chuyển đến các địa điểm để nghe thuyết minh.',
-    stopTour: '⏹️ Đã dừng tour.', cancelNav: '❌ Đã hủy chỉ đường',
-    gpsError: '❌ Cần cấp quyền GPS. Vào Cài đặt → Quyền → Vị trí.',
-    loadError: '⚠️ Không thể tải thông tin', arrivedAt: '📍 Đã đến', navigateTo: '🗺️ Chỉ đường đến',
+    tour: 'Tour',
+    shop: 'Mua sắm',
+    tracking: 'Đang theo dõi',
+    waiting: 'Chờ kích hoạt',
+    points: 'điểm',
+    navigatingTo: 'Đang dẫn đường đến',
+    km: 'km',
+    min: 'phút',
+    welcome: 'Chào mừng!',
+    tapToStart: 'Bấm Navigation để bắt đầu tour',
+    startTour: 'Bắt đầu tour! Di chuyển đến các địa điểm để nghe thuyết minh.',
+    stopTour: 'Đã dừng tour.',
+    cancelNav: 'Đã hủy chỉ đường',
+    gpsError: 'Cần cấp quyền GPS. Vào Cài đặt → Quyền → Vị trí.',
+    loadError: 'Không thể tải thông tin',
+    arrivedAt: 'Đã đến',
+    navigateTo: 'Chỉ đường đến',
     gpsDeniedAlert: 'GPS bị từ chối. Vào Cài đặt → Chrome/Safari → Vị trí → Cho phép',
-    sound: 'Âm thanh', muted: 'Tắt',
+    sound: 'Âm thanh',
+    muted: 'Tắt',
   },
   en: {
-    tour: 'Tour', shop: 'Shop', tracking: 'Tracking', waiting: 'Ready',
-    points: 'spots', navigatingTo: 'Navigating to', km: 'km', min: 'min',
-    welcome: 'Welcome!', tapToStart: 'Tap Navigation to start tour',
-    startTour: '🚀 Tour started! Move to locations to hear the guide.',
-    stopTour: '⏹️ Tour stopped.', cancelNav: '❌ Navigation cancelled',
-    gpsError: '❌ Please enable GPS in Settings → Permissions → Location.',
-    loadError: '⚠️ Cannot load information', arrivedAt: '📍 Arrived at', navigateTo: '🗺️ Navigate to',
+    tour: 'Tour',
+    shop: 'Shop',
+    tracking: 'Tracking',
+    waiting: 'Ready',
+    points: 'spots',
+    navigatingTo: 'Navigating to',
+    km: 'km',
+    min: 'min',
+    welcome: 'Welcome!',
+    tapToStart: 'Tap Navigation to start tour',
+    startTour: 'Tour started! Move to locations to hear the guide.',
+    stopTour: 'Tour stopped.',
+    cancelNav: 'Navigation cancelled',
+    gpsError: 'Please enable GPS in Settings → Permissions → Location.',
+    loadError: 'Cannot load information',
+    arrivedAt: 'Arrived at',
+    navigateTo: 'Navigate to',
     gpsDeniedAlert: 'GPS denied. Go to Settings → Chrome/Safari → Location → Allow',
-    sound: 'Sound', muted: 'Muted',
+    sound: 'Sound',
+    muted: 'Muted',
   },
   ko: {
-    tour: '투어', shop: '쇼핑', tracking: '추적 중', waiting: '대기',
-    points: '장소', navigatingTo: '길 안내 중', km: 'km', min: '분',
-    welcome: '환영합니다!', tapToStart: '내비게이션 버튼을 눌러 시작하세요',
-    startTour: '🚀 투어 시작! 이동하면 자동 안내가 나옵니다.',
-    stopTour: '⏹️ 투어가 중지되었습니다.', cancelNav: '❌ 길안내가 취소되었습니다',
-    gpsError: '❌ GPS 권한이 필요합니다. 설정에서 위치 권한을 허용하세요.',
-    loadError: '⚠️ 정보를 불러올 수 없습니다', arrivedAt: '📍 도착:', navigateTo: '🗺️ 안내:',
+    tour: '투어',
+    shop: '쇼핑',
+    tracking: '추적 중',
+    waiting: '대기',
+    points: '장소',
+    navigatingTo: '길 안내 중',
+    km: 'km',
+    min: '분',
+    welcome: '환영합니다!',
+    tapToStart: '내비게이션 버튼을 눌러 시작하세요',
+    startTour: '투어 시작! 이동하면 자동 안내가 나옵니다.',
+    stopTour: '투어가 중지되었습니다.',
+    cancelNav: '길안내가 취소되었습니다',
+    gpsError: 'GPS 권한이 필요합니다. 설정에서 위치 권한을 허용하세요.',
+    loadError: '정보를 불러올 수 없습니다',
+    arrivedAt: '도착:',
+    navigateTo: '안내:',
     gpsDeniedAlert: 'GPS 권한이 거부되었습니다. 설정 → Chrome/Safari → 위치 → 허용',
-    sound: '소리', muted: '음소거',
+    sound: '소리',
+    muted: '음소거',
   },
   zh: {
-    tour: '导览', shop: '购物', tracking: '正在定位', waiting: '待启动',
-    points: '地点', navigatingTo: '正在导航', km: 'km', min: '分钟',
-    welcome: '欢迎！', tapToStart: '点击导航按钮开始导览',
-    startTour: '🚀 导览开始！移动到景点将自动讲解。',
-    stopTour: '⏹️ 已停止导览。', cancelNav: '❌ 已取消导航',
-    gpsError: '❌ 需要开启 GPS 权限。请在设置中允许定位权限。',
-    loadError: '⚠️ 无法加载信息', arrivedAt: '📍 已到达', navigateTo: '🗺️ 导航到',
+    tour: '导览',
+    shop: '购物',
+    tracking: '正在定位',
+    waiting: '待启动',
+    points: '地点',
+    navigatingTo: '正在导航',
+    km: 'km',
+    min: '分钟',
+    welcome: '欢迎！',
+    tapToStart: '点击导航按钮开始导览',
+    startTour: '导览开始！移动到景点将自动讲解。',
+    stopTour: '已停止导览。',
+    cancelNav: '已取消导航',
+    gpsError: '需要开启 GPS 权限。请在设置中允许定位权限。',
+    loadError: '无法加载信息',
+    arrivedAt: '已到达',
+    navigateTo: '导航到',
     gpsDeniedAlert: 'GPS 权限被拒绝。设置 → Chrome/Safari → 定位 → 允许',
-    sound: '声音', muted: '静音',
+    sound: '声音',
+    muted: '静音',
   },
 };
 
@@ -108,7 +156,6 @@ export default function Home() {
   const [currentLocationId, setCurrentLocationId] = useState<string | null>(null);
   const [memory, setMemory] = useState<ConversationMemory>(emptyMemory());
 
-  // Permission states
   const [gpsOk, setGpsOk] = useState<boolean | null>(null);
   const [micOk, setMicOk] = useState<boolean | null>(null);
 
@@ -128,9 +175,6 @@ export default function Home() {
 
   const t = translations[language];
 
-  // =========================
-  // MEMORY (48h + per-city + keep old features)
-  // =========================
   const writeMemoryToStorage = useCallback((city: CityType, value: ConversationMemory) => {
     try {
       const wrapped: StoredConversationMemory = {
@@ -146,7 +190,6 @@ export default function Home() {
       const cityKey = getMemoryKey(city);
       const raw = localStorage.getItem(cityKey);
 
-      // format mới: { expiresAt, data }
       if (raw) {
         const parsed = JSON.parse(raw);
 
@@ -161,19 +204,29 @@ export default function Home() {
           return wrapped.data || emptyMemory();
         }
 
-        // format cũ (ConversationMemory thuần) -> migrate
-        if (parsed && typeof parsed === 'object' && 'summary' in parsed && 'recentMessages' in parsed && 'messageCount' in parsed) {
+        if (
+          parsed &&
+          typeof parsed === 'object' &&
+          'summary' in parsed &&
+          'recentMessages' in parsed &&
+          'messageCount' in parsed
+        ) {
           const legacy = parsed as ConversationMemory;
           writeMemoryToStorage(city, legacy);
           return legacy;
         }
       }
 
-      // migrate key cũ global nếu có
       const legacyRaw = localStorage.getItem(LEGACY_MEMORY_KEY);
       if (legacyRaw) {
         const parsedLegacy = JSON.parse(legacyRaw);
-        if (parsedLegacy && typeof parsedLegacy === 'object' && 'summary' in parsedLegacy && 'recentMessages' in parsedLegacy && 'messageCount' in parsedLegacy) {
+        if (
+          parsedLegacy &&
+          typeof parsedLegacy === 'object' &&
+          'summary' in parsedLegacy &&
+          'recentMessages' in parsedLegacy &&
+          'messageCount' in parsedLegacy
+        ) {
           const legacyMemory = parsedLegacy as ConversationMemory;
           writeMemoryToStorage(city, legacyMemory);
           localStorage.removeItem(LEGACY_MEMORY_KEY);
@@ -197,14 +250,10 @@ export default function Home() {
     writeMemoryToStorage(selectedCityRef.current, m);
   }, [writeMemoryToStorage]);
 
-  // Load memory mỗi khi đổi city (và lần đầu)
   useEffect(() => {
     loadMemoryForCity(selectedCity);
   }, [loadMemoryForCity, selectedCity]);
 
-  // =========================
-  // Check permissions (giữ nguyên)
-  // =========================
   useEffect(() => {
     if (!('permissions' in navigator)) return;
     navigator.permissions.query({ name: 'geolocation' }).then(r => {
@@ -217,7 +266,6 @@ export default function Home() {
     }).catch(() => {});
   }, []);
 
-  // Warm up GPS (giữ nguyên)
   useEffect(() => {
     if (!('geolocation' in navigator)) return;
     navigator.geolocation.getCurrentPosition(
@@ -232,7 +280,6 @@ export default function Home() {
     );
   }, []);
 
-  // Service worker (giữ nguyên)
   useEffect(() => {
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   }, []);
@@ -266,15 +313,26 @@ export default function Home() {
   const speakText = useCallback(async (text: string) => {
     if (isMutedRef.current) return;
     try {
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+
       const res = await fetch('/api/tts', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, language: languageRef.current }),
       });
+
       if (!res.ok) return;
+
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
+
+      // ✅ TĂNG TỐC ĐỌC 1.2x
+      audio.playbackRate = 1.2;
+
       audioRef.current = audio;
       audio.onended = () => { URL.revokeObjectURL(url); audioRef.current = null; };
       audio.onerror = () => { URL.revokeObjectURL(url); audioRef.current = null; };
@@ -282,12 +340,20 @@ export default function Home() {
     } catch (e) { console.error('speakText error:', e); }
   }, []);
 
-  // ✅ Đổi city: reset UI (giữ nguyên) nhưng KHÔNG xóa memory
   useEffect(() => {
-    if (isTrackingStateRef.current) { setIsTracking(false); window.dispatchEvent(new CustomEvent('stop-tracking')); }
-    setMessages([]); setVisitedCount(0); setRouteInfo(null);
-    setNavigatingTo(null); setCurrentLocationId(null);
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    if (isTrackingStateRef.current) {
+      setIsTracking(false);
+      window.dispatchEvent(new CustomEvent('stop-tracking'));
+    }
+    setMessages([]);
+    setVisitedCount(0);
+    setRouteInfo(null);
+    setNavigatingTo(null);
+    setCurrentLocationId(null);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
   }, [selectedCity]);
 
   const addMessage = useCallback((msg: string, isAi: boolean) => {
@@ -304,14 +370,14 @@ export default function Home() {
           contextPrompt: prompt,
           locationId: locationId || null,
           language: lang,
-          conversationMemory: memoryRef.current, // ✅ gồm summaryLang nếu có
+          conversationMemory: memoryRef.current,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         addMessage(data.reply, true);
         speakText(data.reply);
-        if (data.memoryUpdate) saveMemory(data.memoryUpdate); // ✅ sẽ lưu summaryLang server trả về
+        if (data.memoryUpdate) saveMemory(data.memoryUpdate);
       } else {
         addMessage(translations[lang].loadError, false);
       }
@@ -322,12 +388,12 @@ export default function Home() {
 
   useEffect(() => {
     const onNavigateTo = (e: CustomEvent) => {
-      setNavigatingTo(e.detail.name); setRouteInfo(null);
+      setNavigatingTo(e.detail.name);
+      setRouteInfo(null);
       addMessage(`${translations[languageRef.current].navigateTo} ${e.detail.name}`, false);
     };
     const onRouteFound = (e: CustomEvent) => { setRouteInfo(e.detail); };
     const onCancelNav = () => { setNavigatingTo(null); setRouteInfo(null); };
-
     const onArrived = (e: CustomEvent) => {
       const { name, prompt, locationId } = e.detail;
       setCurrentLocationId(locationId || null);
@@ -335,7 +401,6 @@ export default function Home() {
       addMessage(`${translations[languageRef.current].arrivedAt} ${name}`, false);
       fetchAI(prompt, locationId);
     };
-
     const onVoiceSpeak = () => {
       if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
     };
@@ -360,10 +425,16 @@ export default function Home() {
       if (!('geolocation' in navigator)) { addMessage(t.gpsError, false); return; }
       navigator.permissions?.query({ name: 'geolocation' }).then(r => {
         if (r.state === 'denied') { addMessage(t.gpsError, false); return; }
-        setIsTracking(true); addMessage(t.startTour, false);
-      }).catch(() => { setIsTracking(true); addMessage(t.startTour, false); });
+        setIsTracking(true);
+        addMessage(t.startTour, false);
+      }).catch(() => {
+        setIsTracking(true);
+        addMessage(t.startTour, false);
+      });
     } else {
-      setIsTracking(false); setNavigatingTo(null); setRouteInfo(null);
+      setIsTracking(false);
+      setNavigatingTo(null);
+      setRouteInfo(null);
       addMessage(t.stopTour, false);
       if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
       window.dispatchEvent(new CustomEvent('stop-tracking'));
@@ -371,7 +442,8 @@ export default function Home() {
   };
 
   const handleCancelNavigation = () => {
-    setNavigatingTo(null); setRouteInfo(null);
+    setNavigatingTo(null);
+    setRouteInfo(null);
     addMessage(t.cancelNav, false);
     window.dispatchEvent(new CustomEvent('cancel-navigation'));
   };
@@ -550,20 +622,13 @@ export default function Home() {
           </div>
 
           {/* Voice Chat */}
-          <VoiceChat
-            language={language}
-            isMuted={isMuted}
-            locationId={currentLocationId}
-            memory={memory}
-            onMemoryUpdate={saveMemory}
-          />
+          <VoiceChat language={language} isMuted={isMuted} locationId={currentLocationId} memory={memory} onMemoryUpdate={saveMemory} />
 
           {/* Chat Panel */}
           <div className="h-[28vh] bg-white rounded-t-3xl shadow-2xl z-[1000] flex flex-col">
             <div className="flex justify-center pt-2 pb-1">
               <div className="w-10 h-1 bg-gray-300 rounded-full" />
             </div>
-
             {memory.summary && (
               <div className="px-4 pb-1">
                 <div className="bg-purple-50 rounded-xl px-3 py-1.5 flex items-start gap-1.5">
@@ -572,7 +637,6 @@ export default function Home() {
                 </div>
               </div>
             )}
-
             <div className="flex-grow overflow-y-auto px-4 pb-4 space-y-3">
               {messages.length === 0 && (
                 <div className="flex flex-col items-center justify-center h-full text-center">
@@ -581,20 +645,17 @@ export default function Home() {
                   <p className="text-gray-400 text-sm mt-1">{t.tapToStart}</p>
                 </div>
               )}
-
               {messages.map((m, i) => (
                 <div key={i} className={`flex ${m.role === 'ai' ? 'justify-start' : 'justify-center'}`}>
                   <div className={`max-w-[90%] p-3 rounded-2xl text-sm ${
-                    m.role === 'ai'
-                      ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100'
-                      : 'bg-gray-100 text-gray-500 text-xs'
+                    m.role === 'ai' ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100'
+                    : 'bg-gray-100 text-gray-500 text-xs'
                   }`}>
                     <p className="whitespace-pre-wrap leading-relaxed">{m.content}</p>
                     {m.role === 'ai' && <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>}
                   </div>
                 </div>
               ))}
-
               <div ref={chatEndRef} />
             </div>
           </div>
@@ -606,18 +667,13 @@ export default function Home() {
       {/* Bottom Tab Bar */}
       <div className="bg-white border-t border-gray-200 z-[1002]">
         <div className="flex justify-around items-center py-2 px-4 max-w-md mx-auto">
-          <button
-            onClick={() => setActiveTab('tour')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}
-          >
+          <button onClick={() => setActiveTab('tour')}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
             <Map size={24} />
             <span className="text-xs mt-1 font-medium">{t.tour}</span>
           </button>
-
-          <button
-            onClick={() => setActiveTab('shop')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}
-          >
+          <button onClick={() => setActiveTab('shop')}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
             <ShoppingBag size={24} />
             <span className="text-xs mt-1 font-medium">{t.shop}</span>
           </button>
