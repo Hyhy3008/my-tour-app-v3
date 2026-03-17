@@ -175,6 +175,9 @@ export default function Home() {
 
   const t = translations[language];
 
+  // =========================
+  // MEMORY
+  // =========================
   const writeMemoryToStorage = useCallback((city: CityType, value: ConversationMemory) => {
     try {
       const wrapped: StoredConversationMemory = {
@@ -254,6 +257,9 @@ export default function Home() {
     loadMemoryForCity(selectedCity);
   }, [loadMemoryForCity, selectedCity]);
 
+  // =========================
+  // PERMISSIONS
+  // =========================
   useEffect(() => {
     if (!('permissions' in navigator)) return;
     navigator.permissions.query({ name: 'geolocation' }).then(r => {
@@ -266,6 +272,7 @@ export default function Home() {
     }).catch(() => {});
   }, []);
 
+  // Warm up GPS
   useEffect(() => {
     if (!('geolocation' in navigator)) return;
     navigator.geolocation.getCurrentPosition(
@@ -280,6 +287,7 @@ export default function Home() {
     );
   }, []);
 
+  // Service worker
   useEffect(() => {
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   }, []);
@@ -330,16 +338,19 @@ export default function Home() {
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
 
-      // ✅ TĂNG TỐC ĐỌC 1.2x
+      // ✅ tốc độ đọc 1.2x
       audio.playbackRate = 1.2;
 
       audioRef.current = audio;
       audio.onended = () => { URL.revokeObjectURL(url); audioRef.current = null; };
       audio.onerror = () => { URL.revokeObjectURL(url); audioRef.current = null; };
       await audio.play();
-    } catch (e) { console.error('speakText error:', e); }
+    } catch (e) {
+      console.error('speakText error:', e);
+    }
   }, []);
 
+  // Đổi city: reset UI nhưng không xóa memory
   useEffect(() => {
     if (isTrackingStateRef.current) {
       setIsTracking(false);
@@ -357,7 +368,10 @@ export default function Home() {
   }, [selectedCity]);
 
   const addMessage = useCallback((msg: string, isAi: boolean) => {
-    const time = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+    const time = new Date().toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
     setMessages(prev => [...prev, { role: isAi ? 'ai' : 'system', content: msg, time }]);
   }, []);
 
@@ -365,7 +379,8 @@ export default function Home() {
     const lang = languageRef.current;
     try {
       const res = await fetch('/api/chat', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contextPrompt: prompt,
           locationId: locationId || null,
@@ -462,10 +477,9 @@ export default function Home() {
 
       {activeTab === 'tour' && (
         <>
-          {/* ══ HEADER ══ */}
+          {/* HEADER */}
           <div className="absolute top-0 left-0 right-0 z-[1000] p-3">
-            <div className="bg-white/95 backdrop-blur-md shadow-lg rounded-2xl overflow-hidden">
-
+            <div className="bg-white/95 backdrop-blur-md shadow-lg rounded-2xl overflow-visible">
               {/* Row 1 */}
               <div className="flex items-center gap-3 px-4 pt-3 pb-3">
                 <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shrink-0">
@@ -492,12 +506,14 @@ export default function Home() {
                   </div>
                 </div>
 
-                <button onClick={handleStartTour}
+                <button
+                  onClick={handleStartTour}
                   className={`w-14 h-14 rounded-2xl shadow-lg transition-all active:scale-95 flex items-center justify-center shrink-0 ${
                     isTracking
                       ? 'bg-gradient-to-br from-red-500 to-pink-500 text-white'
                       : 'bg-gradient-to-br from-blue-500 to-cyan-500 text-white'
-                  }`}>
+                  }`}
+                >
                   <Navigation size={26} className={isTracking ? 'animate-pulse' : ''} />
                 </button>
 
@@ -505,88 +521,117 @@ export default function Home() {
                   onClick={() => setHeaderCollapsed(p => !p)}
                   className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center shrink-0 active:scale-95 transition-all"
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
-                    style={{ transform: headerCollapsed ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
-                    <path d="M18 15l-6-6-6 6"/>
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    style={{ transform: headerCollapsed ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+                  >
+                    <path d="M18 15l-6-6-6 6" />
                   </svg>
                 </button>
               </div>
 
               {!headerCollapsed && (
                 <>
-                  {/* Row 2: City selector */}
+                  {/* Row 2 */}
                   <div className="flex gap-2 px-4 pb-2">
-                    <button onClick={() => setSelectedCity('ninh-binh')}
+                    <button
+                      onClick={() => setSelectedCity('ninh-binh')}
                       className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95 ${
                         selectedCity === 'ninh-binh' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'
-                      }`}>
+                      }`}
+                    >
                       🏞️ Ninh Bình
                     </button>
-                    <button onClick={() => setSelectedCity('hanoi')}
+                    <button
+                      onClick={() => setSelectedCity('hanoi')}
                       className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95 ${
                         selectedCity === 'hanoi' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'
-                      }`}>
+                      }`}
+                    >
                       🏛️ Hà Nội
                     </button>
                   </div>
 
-                  {/* Row 3: GPS, Mic, Sound, Language */}
+                  {/* Row 3 */}
                   <div className="flex items-center gap-2 px-4 pb-3 border-t border-gray-100 pt-2">
-                    <button onClick={requestGPS}
+                    <button
+                      onClick={requestGPS}
                       className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium transition-all active:scale-95 ${
                         gpsOk === true ? 'bg-green-50 text-green-600'
                         : gpsOk === false ? 'bg-red-50 text-red-500 animate-pulse'
                         : 'bg-gray-100 text-gray-500'
-                      }`}>
+                      }`}
+                    >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+                        <circle cx="12" cy="12" r="3" />
+                        <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
                       </svg>
                       GPS {gpsOk === true ? '✓' : gpsOk === false ? '✗' : '?'}
                     </button>
 
-                    <button onClick={requestMic}
+                    <button
+                      onClick={requestMic}
                       className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium transition-all active:scale-95 ${
                         micOk === true ? 'bg-green-50 text-green-600'
                         : micOk === false ? 'bg-red-50 text-red-500 animate-pulse'
                         : 'bg-gray-100 text-gray-500'
-                      }`}>
+                      }`}
+                    >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <rect x="9" y="2" width="6" height="11" rx="3"/>
-                        <path d="M5 10a7 7 0 0 0 14 0M12 19v3M9 22h6"/>
+                        <rect x="9" y="2" width="6" height="11" rx="3" />
+                        <path d="M5 10a7 7 0 0 0 14 0M12 19v3M9 22h6" />
                       </svg>
                       Mic {micOk === true ? '✓' : micOk === false ? '✗' : '?'}
                     </button>
 
-                    <button onClick={toggleMute}
+                    <button
+                      onClick={toggleMute}
                       className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium transition-all active:scale-95 ${
                         isMuted ? 'bg-red-50 text-red-500' : 'bg-gray-100 text-gray-500'
-                      }`}>
+                      }`}
+                    >
                       {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
                       {isMuted ? t.muted : t.sound}
                     </button>
 
                     <div className="relative">
-                      <button onClick={() => setShowLangMenu(!showLangMenu)}
-                        className="h-10 px-3 rounded-xl bg-gray-100 text-gray-500 flex items-center gap-1 text-xs font-medium active:scale-95 transition-all">
+                      <button
+                        onClick={() => setShowLangMenu(!showLangMenu)}
+                        className="h-10 px-3 rounded-xl bg-gray-100 text-gray-500 flex items-center gap-1 text-xs font-medium active:scale-95 transition-all"
+                      >
                         <Globe size={14} />
                         {language.toUpperCase()}
                       </button>
+
                       {showLangMenu && (
-                        <div className="absolute right-0 bottom-12 bg-white rounded-xl shadow-xl overflow-hidden z-10 w-40">
-                          <button onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
-                            className={`w-full px-4 py-3 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}>
+                        <div className="absolute right-0 top-12 mt-2 bg-white rounded-xl shadow-xl overflow-hidden z-20 w-40 border border-gray-100">
+                          <button
+                            onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
+                            className={`w-full px-4 py-3 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}
+                          >
                             🇻🇳 Tiếng Việt
                           </button>
-                          <button onClick={() => { setLanguage('en'); setShowLangMenu(false); }}
-                            className={`w-full px-4 py-3 text-left text-sm ${language === 'en' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}>
+                          <button
+                            onClick={() => { setLanguage('en'); setShowLangMenu(false); }}
+                            className={`w-full px-4 py-3 text-left text-sm ${language === 'en' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}
+                          >
                             🇬🇧 English
                           </button>
-                          <button onClick={() => { setLanguage('ko'); setShowLangMenu(false); }}
-                            className={`w-full px-4 py-3 text-left text-sm ${language === 'ko' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}>
+                          <button
+                            onClick={() => { setLanguage('ko'); setShowLangMenu(false); }}
+                            className={`w-full px-4 py-3 text-left text-sm ${language === 'ko' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}
+                          >
                             🇰🇷 한국어
                           </button>
-                          <button onClick={() => { setLanguage('zh'); setShowLangMenu(false); }}
-                            className={`w-full px-4 py-3 text-left text-sm ${language === 'zh' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}>
+                          <button
+                            onClick={() => { setLanguage('zh'); setShowLangMenu(false); }}
+                            className={`w-full px-4 py-3 text-left text-sm ${language === 'zh' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}
+                          >
                             🇨🇳 中文
                           </button>
                         </div>
@@ -622,13 +667,20 @@ export default function Home() {
           </div>
 
           {/* Voice Chat */}
-          <VoiceChat language={language} isMuted={isMuted} locationId={currentLocationId} memory={memory} onMemoryUpdate={saveMemory} />
+          <VoiceChat
+            language={language}
+            isMuted={isMuted}
+            locationId={currentLocationId}
+            memory={memory}
+            onMemoryUpdate={saveMemory}
+          />
 
           {/* Chat Panel */}
           <div className="h-[28vh] bg-white rounded-t-3xl shadow-2xl z-[1000] flex flex-col">
             <div className="flex justify-center pt-2 pb-1">
               <div className="w-10 h-1 bg-gray-300 rounded-full" />
             </div>
+
             {memory.summary && (
               <div className="px-4 pb-1">
                 <div className="bg-purple-50 rounded-xl px-3 py-1.5 flex items-start gap-1.5">
@@ -637,6 +689,7 @@ export default function Home() {
                 </div>
               </div>
             )}
+
             <div className="flex-grow overflow-y-auto px-4 pb-4 space-y-3">
               {messages.length === 0 && (
                 <div className="flex flex-col items-center justify-center h-full text-center">
@@ -645,35 +698,51 @@ export default function Home() {
                   <p className="text-gray-400 text-sm mt-1">{t.tapToStart}</p>
                 </div>
               )}
+
               {messages.map((m, i) => (
                 <div key={i} className={`flex ${m.role === 'ai' ? 'justify-start' : 'justify-center'}`}>
                   <div className={`max-w-[90%] p-3 rounded-2xl text-sm ${
-                    m.role === 'ai' ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100'
-                    : 'bg-gray-100 text-gray-500 text-xs'
+                    m.role === 'ai'
+                      ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100'
+                      : 'bg-gray-100 text-gray-500 text-xs'
                   }`}>
                     <p className="whitespace-pre-wrap leading-relaxed">{m.content}</p>
-                    {m.role === 'ai' && <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>}
+                    {m.role === 'ai' && (
+                      <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>
+                    )}
                   </div>
                 </div>
               ))}
+
               <div ref={chatEndRef} />
             </div>
           </div>
         </>
       )}
 
-      {activeTab === 'shop' && <ShopTab selectedCity={selectedCity} language={language} />}
+      {activeTab === 'shop' && (
+        <ShopTab selectedCity={selectedCity} language={language} />
+      )}
 
       {/* Bottom Tab Bar */}
       <div className="bg-white border-t border-gray-200 z-[1002]">
         <div className="flex justify-around items-center py-2 px-4 max-w-md mx-auto">
-          <button onClick={() => setActiveTab('tour')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
+          <button
+            onClick={() => setActiveTab('tour')}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
+              activeTab === 'tour' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'
+            }`}
+          >
             <Map size={24} />
             <span className="text-xs mt-1 font-medium">{t.tour}</span>
           </button>
-          <button onClick={() => setActiveTab('shop')}
-            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
+
+          <button
+            onClick={() => setActiveTab('shop')}
+            className={`flex flex-col items-center py-2 px-6 rounded-xl transition-all ${
+              activeTab === 'shop' ? 'bg-blue-50 text-blue-600' : 'text-gray-400'
+            }`}
+          >
             <ShoppingBag size={24} />
             <span className="text-xs mt-1 font-medium">{t.shop}</span>
           </button>
