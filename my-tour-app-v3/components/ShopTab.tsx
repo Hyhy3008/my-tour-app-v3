@@ -20,7 +20,7 @@ interface CartItem extends Product {
 
 interface ShopTabProps {
   selectedCity: 'ninh-binh' | 'hanoi';
-  language: 'vi' | 'en';
+  language: 'vi' | 'en' | 'ko' | 'zh';
 }
 
 const products: Product[] = [
@@ -30,7 +30,7 @@ const products: Product[] = [
   { id: 'nem-chua', name: 'Nem chua Yên Mạc', nameEn: 'Fermented Pork Roll', price: 60000, image: '🥟', description: 'Nem chua truyền thống', descriptionEn: 'Traditional fermented pork', city: 'ninh-binh' },
   { id: 'ruou-kim-son', name: 'Rượu Kim Sơn', nameEn: 'Kim Son Rice Wine', price: 120000, image: '🍶', description: 'Rượu nếp thơm nồng', descriptionEn: 'Fragrant rice wine', city: 'ninh-binh' },
   { id: 'theu-van-lam', name: 'Thêu Văn Lâm', nameEn: 'Van Lam Embroidery', price: 250000, image: '🧵', description: 'Tranh thêu tay tinh xảo', descriptionEn: 'Handmade embroidery art', city: 'ninh-binh' },
-  
+
   // Hà Nội
   { id: 'pho', name: 'Phở Hà Nội', nameEn: 'Hanoi Pho', price: 50000, image: '🍜', description: 'Phở bò truyền thống', descriptionEn: 'Traditional beef noodle soup', city: 'hanoi' },
   { id: 'bun-cha', name: 'Bún chả Hà Nội', nameEn: 'Hanoi Grilled Pork Noodles', price: 60000, image: '🥢', description: 'Bún chả thơm ngon', descriptionEn: 'Grilled pork with noodles', city: 'hanoi' },
@@ -93,6 +93,46 @@ const t = {
     orderSuccess: 'Order Confirmed!',
     orderSuccessMsg: 'We will prepare your order. See you soon!',
     fillAll: 'Please fill all fields',
+  },
+  ko: {
+    title: '지역 특산품',
+    products: '상품',
+    cart: '장바구니',
+    emptyCart: '장바구니가 비어 있습니다',
+    total: '총합',
+    checkout: '주문하기',
+    pickupDetails: '수령 정보',
+    yourName: '이름',
+    phone: '전화번호',
+    pickupLocation: '수령 장소',
+    pickupTime: '수령 시간',
+    selectLocation: '장소 선택',
+    selectTime: '시간 선택',
+    orderSummary: '주문 요약',
+    confirmOrder: '주문 확인',
+    orderSuccess: '주문이 완료되었습니다!',
+    orderSuccessMsg: '주문을 준비하겠습니다. 곧 만나겠습니다!',
+    fillAll: '모든 정보를 입력해 주세요',
+  },
+  zh: {
+    title: '当地特产',
+    products: '件商品',
+    cart: '购物车',
+    emptyCart: '购物车为空',
+    total: '总计',
+    checkout: '下单',
+    pickupDetails: '取货信息',
+    yourName: '姓名',
+    phone: '电话号码',
+    pickupLocation: '取货地点',
+    pickupTime: '取货时间',
+    selectLocation: '选择地点',
+    selectTime: '选择时间',
+    orderSummary: '订单摘要',
+    confirmOrder: '确认下单',
+    orderSuccess: '下单成功！',
+    orderSuccessMsg: '我们会为您准备订单，稍后见！',
+    fillAll: '请填写完整信息',
   }
 };
 
@@ -107,7 +147,15 @@ export default function ShopTab({ selectedCity, language }: ShopTabProps) {
   const [orderSuccess, setOrderSuccess] = useState(false);
 
   const texts = t[language];
-  const filteredProducts = products.filter(p => p.city === selectedCity || p.city === 'both');
+
+  // ✅ Dữ liệu sản phẩm hiện chỉ có VI/EN:
+  // vi -> dùng tiếng Việt
+  // en / ko / zh -> dùng tiếng Anh
+  const useEnglishContent = language !== 'vi';
+
+  const filteredProducts = products.filter(
+    p => p.city === selectedCity || p.city === 'both'
+  );
 
   const addToCart = (product: Product) => {
     setCart(prev => {
@@ -122,13 +170,17 @@ export default function ShopTab({ selectedCity, language }: ShopTabProps) {
   };
 
   const updateQuantity = (id: string, delta: number) => {
-    setCart(prev => prev.map(item => {
-      if (item.id === id) {
-        const newQty = item.quantity + delta;
-        return newQty > 0 ? { ...item, quantity: newQty } : item;
-      }
-      return item;
-    }).filter(item => item.quantity > 0));
+    setCart(prev =>
+      prev
+        .map(item => {
+          if (item.id === id) {
+            const newQty = item.quantity + delta;
+            return newQty > 0 ? { ...item, quantity: newQty } : item;
+          }
+          return item;
+        })
+        .filter(item => item.quantity > 0)
+    );
   };
 
   const removeFromCart = (id: string) => {
@@ -139,8 +191,8 @@ export default function ShopTab({ selectedCity, language }: ShopTabProps) {
   const totalPrice = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
   const formatPrice = (price: number) => {
-    if (language === 'en') return `$${(price / 24000).toFixed(2)}`;
-    return `${price.toLocaleString('vi-VN')}đ`;
+    if (language === 'vi') return `${price.toLocaleString('vi-VN')}đ`;
+    return `$${(price / 24000).toFixed(2)}`;
   };
 
   const generateTimeSlots = () => {
@@ -169,7 +221,8 @@ export default function ShopTab({ selectedCity, language }: ShopTabProps) {
           pickupLocation,
           customerName,
           customerPhone,
-          city: selectedCity
+          city: selectedCity,
+          language
         })
       });
 
@@ -206,7 +259,7 @@ export default function ShopTab({ selectedCity, language }: ShopTabProps) {
             </p>
           </div>
         </div>
-        
+
         <button
           onClick={() => setShowCart(true)}
           className="relative p-3 bg-blue-500 text-white rounded-xl"
@@ -227,13 +280,15 @@ export default function ShopTab({ selectedCity, language }: ShopTabProps) {
             <div key={product.id} className="bg-white rounded-2xl p-3 shadow-sm">
               <div className="text-4xl text-center mb-2">{product.image}</div>
               <h3 className="font-bold text-sm text-gray-800 truncate">
-                {language === 'en' ? product.nameEn : product.name}
+                {useEnglishContent ? product.nameEn : product.name}
               </h3>
               <p className="text-xs text-gray-500 mt-1 line-clamp-2">
-                {language === 'en' ? product.descriptionEn : product.description}
+                {useEnglishContent ? product.descriptionEn : product.description}
               </p>
               <div className="flex items-center justify-between mt-3">
-                <span className="font-bold text-blue-600 text-sm">{formatPrice(product.price)}</span>
+                <span className="font-bold text-blue-600 text-sm">
+                  {formatPrice(product.price)}
+                </span>
                 <button
                   onClick={() => addToCart(product)}
                   className="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center"
@@ -268,18 +323,31 @@ export default function ShopTab({ selectedCity, language }: ShopTabProps) {
                     <div key={item.id} className="flex items-center gap-3 bg-gray-50 rounded-xl p-3">
                       <span className="text-2xl">{item.image}</span>
                       <div className="flex-grow">
-                        <p className="font-medium text-sm">{language === 'en' ? item.nameEn : item.name}</p>
-                        <p className="text-blue-600 text-sm font-bold">{formatPrice(item.price)}</p>
+                        <p className="font-medium text-sm">
+                          {useEnglishContent ? item.nameEn : item.name}
+                        </p>
+                        <p className="text-blue-600 text-sm font-bold">
+                          {formatPrice(item.price)}
+                        </p>
                       </div>
                       <div className="flex items-center gap-2">
-                        <button onClick={() => updateQuantity(item.id, -1)} className="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center">
+                        <button
+                          onClick={() => updateQuantity(item.id, -1)}
+                          className="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center"
+                        >
                           <Minus size={14} />
                         </button>
                         <span className="w-6 text-center font-medium">{item.quantity}</span>
-                        <button onClick={() => updateQuantity(item.id, 1)} className="w-7 h-7 bg-blue-500 text-white rounded-full flex items-center justify-center">
+                        <button
+                          onClick={() => updateQuantity(item.id, 1)}
+                          className="w-7 h-7 bg-blue-500 text-white rounded-full flex items-center justify-center"
+                        >
                           <Plus size={14} />
                         </button>
-                        <button onClick={() => removeFromCart(item.id)} className="ml-2 text-red-500">
+                        <button
+                          onClick={() => removeFromCart(item.id)}
+                          className="ml-2 text-red-500"
+                        >
                           <X size={18} />
                         </button>
                       </div>
@@ -358,7 +426,7 @@ export default function ShopTab({ selectedCity, language }: ShopTabProps) {
                       <option value="">{texts.selectLocation}</option>
                       {pickupLocations[selectedCity].map(loc => (
                         <option key={loc.id} value={loc.id}>
-                          {language === 'en' ? loc.nameEn : loc.name}
+                          {useEnglishContent ? loc.nameEn : loc.name}
                         </option>
                       ))}
                     </select>
@@ -384,7 +452,7 @@ export default function ShopTab({ selectedCity, language }: ShopTabProps) {
                     <h3 className="font-medium mb-2">{texts.orderSummary}</h3>
                     {cart.map(item => (
                       <div key={item.id} className="flex justify-between text-sm py-1">
-                        <span>{language === 'en' ? item.nameEn : item.name} x{item.quantity}</span>
+                        <span>{useEnglishContent ? item.nameEn : item.name} x{item.quantity}</span>
                         <span>{formatPrice(item.price * item.quantity)}</span>
                       </div>
                     ))}
