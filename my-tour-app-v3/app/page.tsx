@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { Navigation, MapPin, Volume2, VolumeX, CheckCircle, X, Map, ShoppingBag, Globe } from 'lucide-react';
+import { Navigation, MapPin, Volume2, VolumeX, X, Map, ShoppingBag, Globe } from 'lucide-react';
 import ShopTab from '@/components/ShopTab';
 import VoiceChat from '@/components/VoiceChat';
 
@@ -61,6 +61,9 @@ const translations = {
     loadError: '⚠️ Không thể tải thông tin',
     arrivedAt: '📍 Đã đến',
     navigateTo: '🗺️ Chỉ đường đến',
+    sound: 'Âm thanh',
+    muted: 'Tắt',
+    gpsDeniedAlert: 'GPS bị từ chối. Vào Cài đặt → Chrome/Safari → Vị trí → Cho phép',
   },
   en: {
     tour: 'Tour',
@@ -80,10 +83,57 @@ const translations = {
     loadError: '⚠️ Cannot load information',
     arrivedAt: '📍 Arrived at',
     navigateTo: '🗺️ Navigate to',
+    sound: 'Sound',
+    muted: 'Muted',
+    gpsDeniedAlert: 'GPS denied. Go to Settings → Chrome/Safari → Location → Allow',
+  },
+  ko: {
+    tour: '투어',
+    shop: '쇼핑',
+    tracking: '추적 중',
+    waiting: '대기 중',
+    points: '장소',
+    navigatingTo: '길 안내 중',
+    km: 'km',
+    min: '분',
+    welcome: '환영합니다!',
+    tapToStart: '내비게이션 버튼을 눌러 투어를 시작하세요',
+    startTour: '🚀 투어 시작! 장소로 이동하면 자동 설명이 나옵니다.',
+    stopTour: '⏹️ 투어가 종료되었습니다.',
+    cancelNav: '❌ 길안내가 취소되었습니다',
+    gpsError: '❌ GPS 권한이 필요합니다. 설정 → 위치 권한을 확인하세요.',
+    loadError: '⚠️ 정보를 불러올 수 없습니다',
+    arrivedAt: '📍 도착:',
+    navigateTo: '🗺️ 길안내:',
+    sound: '소리',
+    muted: '음소거',
+    gpsDeniedAlert: 'GPS 권한이 거부되었습니다. 설정 → Chrome/Safari → 위치 → 허용',
+  },
+  zh: {
+    tour: '导览',
+    shop: '购物',
+    tracking: '正在定位',
+    waiting: '等待启动',
+    points: '地点',
+    navigatingTo: '正在导航前往',
+    km: '公里',
+    min: '分钟',
+    welcome: '欢迎！',
+    tapToStart: '点击导航按钮开始导览',
+    startTour: '🚀 导览开始！移动到景点后将自动讲解。',
+    stopTour: '⏹️ 导览已停止。',
+    cancelNav: '❌ 已取消导航',
+    gpsError: '❌ 需要开启 GPS 权限。请到设置 → 定位权限中开启。',
+    loadError: '⚠️ 无法加载信息',
+    arrivedAt: '📍 已到达',
+    navigateTo: '🗺️ 导航到',
+    sound: '声音',
+    muted: '静音',
+    gpsDeniedAlert: 'GPS 权限被拒绝。请前往 设置 → Chrome/Safari → 定位 → 允许',
   },
 };
 
-type Language = 'vi' | 'en';
+type Language = 'vi' | 'en' | 'ko' | 'zh';
 type CityType = 'ninh-binh' | 'hanoi';
 type TabType = 'tour' | 'shop';
 
@@ -104,7 +154,6 @@ export default function Home() {
   const [currentLocationId, setCurrentLocationId] = useState<string | null>(null);
   const [memory, setMemory] = useState<ConversationMemory>(emptyMemory());
 
-  // Permission states
   const [gpsOk, setGpsOk] = useState<boolean | null>(null);
   const [micOk, setMicOk] = useState<boolean | null>(null);
 
@@ -124,9 +173,6 @@ export default function Home() {
 
   const t = translations[language];
 
-  // =========================
-  // MEMORY HELPERS
-  // =========================
   const writeMemoryToStorage = useCallback((city: CityType, value: ConversationMemory) => {
     try {
       const wrapped: StoredConversationMemory = {
@@ -142,16 +188,10 @@ export default function Home() {
       const cityKey = getMemoryKey(city);
       const raw = localStorage.getItem(cityKey);
 
-      // Format mới: { expiresAt, data }
       if (raw) {
         const parsed = JSON.parse(raw);
 
-        if (
-          parsed &&
-          typeof parsed === 'object' &&
-          'expiresAt' in parsed &&
-          'data' in parsed
-        ) {
+        if (parsed && typeof parsed === 'object' && 'expiresAt' in parsed && 'data' in parsed) {
           const wrapped = parsed as StoredConversationMemory;
 
           if (Date.now() > wrapped.expiresAt) {
@@ -162,7 +202,6 @@ export default function Home() {
           return wrapped.data || emptyMemory();
         }
 
-        // Format cũ: ConversationMemory thuần
         if (
           parsed &&
           typeof parsed === 'object' &&
@@ -176,7 +215,6 @@ export default function Home() {
         }
       }
 
-      // Migrate key cũ global nếu có
       const legacyRaw = localStorage.getItem(LEGACY_MEMORY_KEY);
       if (legacyRaw) {
         const parsedLegacy = JSON.parse(legacyRaw);
@@ -210,14 +248,10 @@ export default function Home() {
     writeMemoryToStorage(selectedCityRef.current, m);
   }, [writeMemoryToStorage]);
 
-  // Load memory lần đầu
   useEffect(() => {
     loadMemoryForCity(selectedCity);
   }, [loadMemoryForCity, selectedCity]);
 
-  // =========================
-  // CHECK PERMISSIONS
-  // =========================
   useEffect(() => {
     if (!('permissions' in navigator)) return;
 
@@ -232,9 +266,6 @@ export default function Home() {
     }).catch(() => {});
   }, []);
 
-  // =========================
-  // WARM UP GPS
-  // =========================
   useEffect(() => {
     if (!('geolocation' in navigator)) return;
 
@@ -250,13 +281,19 @@ export default function Home() {
     );
   }, []);
 
-  // =========================
-  // SERVICE WORKER
-  // =========================
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
+  }, []);
+
+  // Prefetch map chunk sớm hơn
+  useEffect(() => {
+    const id = setTimeout(() => {
+      import('@/components/MapContainer');
+    }, 300);
+
+    return () => clearTimeout(id);
   }, []);
 
   const requestGPS = () => {
@@ -270,11 +307,7 @@ export default function Home() {
       (err) => {
         setGpsOk(false);
         if (err.code === 1) {
-          alert(
-            language === 'vi'
-              ? 'GPS bị từ chối. Vào Cài đặt → Chrome/Safari → Vị trí → Cho phép'
-              : 'GPS denied. Go to Settings → Chrome/Safari → Location → Allow'
-          );
+          alert(t.gpsDeniedAlert);
         }
       },
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 }
@@ -329,11 +362,6 @@ export default function Home() {
     }
   }, []);
 
-  // =========================
-  // ĐỔI CITY:
-  // reset UI, stop tracking/audio
-  // nhưng KHÔNG xóa memory
-  // =========================
   useEffect(() => {
     if (isTrackingStateRef.current) {
       setIsTracking(false);
@@ -357,7 +385,7 @@ export default function Home() {
   const addMessage = useCallback((msg: string, isAi: boolean) => {
     const time = new Date().toLocaleTimeString('vi-VN', {
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
     });
 
     setMessages(prev => [
@@ -416,7 +444,7 @@ export default function Home() {
     const onArrived = (e: CustomEvent) => {
       const { name, prompt, locationId } = e.detail;
       setCurrentLocationId(locationId || null);
-      setVisitedCount(p => p + 1);
+      setVisitedCount(prev => prev + 1);
       addMessage(`${translations[languageRef.current].arrivedAt} ${name}`, false);
       fetchAI(prompt, locationId);
     };
@@ -499,14 +527,11 @@ export default function Home() {
 
   return (
     <div className="flex flex-col h-[100dvh] bg-gray-100 overflow-hidden relative">
-
       {activeTab === 'tour' && (
         <>
-          {/* ══ HEADER ══ */}
+          {/* HEADER */}
           <div className="absolute top-0 left-0 right-0 z-[1000] p-3">
             <div className="bg-white/95 backdrop-blur-md shadow-lg rounded-2xl overflow-hidden">
-
-              {/* Row 1: luôn hiện - Logo + Title + Start + Collapse */}
               <div className="flex items-center gap-3 px-4 pt-3 pb-3">
                 <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shrink-0">
                   <MapPin className="text-white" size={22} />
@@ -532,7 +557,6 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Start tour */}
                 <button
                   onClick={handleStartTour}
                   className={`w-14 h-14 rounded-2xl shadow-lg transition-all active:scale-95 flex items-center justify-center shrink-0 ${
@@ -544,9 +568,8 @@ export default function Home() {
                   <Navigation size={26} className={isTracking ? 'animate-pulse' : ''} />
                 </button>
 
-                {/* Toggle collapse */}
                 <button
-                  onClick={() => setHeaderCollapsed(p => !p)}
+                  onClick={() => setHeaderCollapsed(prev => !prev)}
                   className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center shrink-0 active:scale-95 transition-all"
                 >
                   <svg
@@ -556,17 +579,18 @@ export default function Home() {
                     fill="none"
                     stroke="currentColor"
                     strokeWidth="2.5"
-                    style={{ transform: headerCollapsed ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+                    style={{
+                      transform: headerCollapsed ? 'rotate(180deg)' : 'rotate(0deg)',
+                      transition: 'transform 0.2s'
+                    }}
                   >
                     <path d="M18 15l-6-6-6 6" />
                   </svg>
                 </button>
               </div>
 
-              {/* Expandable rows - ẩn khi collapsed */}
               {!headerCollapsed && (
                 <>
-                  {/* Row 2: City selector */}
                   <div className="flex gap-2 px-4 pb-2">
                     <button
                       onClick={() => setSelectedCity('ninh-binh')}
@@ -586,7 +610,6 @@ export default function Home() {
                     </button>
                   </div>
 
-                  {/* Row 3: GPS, Mic, Sound, Language */}
                   <div className="flex items-center gap-2 px-4 pb-3 border-t border-gray-100 pt-2">
                     <button
                       onClick={requestGPS}
@@ -625,7 +648,7 @@ export default function Home() {
                       }`}
                     >
                       {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-                      {isMuted ? (language === 'vi' ? 'Tắt' : 'Muted') : (language === 'vi' ? 'Âm thanh' : 'Sound')}
+                      {isMuted ? t.muted : t.sound}
                     </button>
 
                     <div className="relative">
@@ -636,8 +659,9 @@ export default function Home() {
                         <Globe size={14} />
                         {language.toUpperCase()}
                       </button>
+
                       {showLangMenu && (
-                        <div className="absolute right-0 bottom-12 bg-white rounded-xl shadow-xl overflow-hidden z-10 w-36">
+                        <div className="absolute right-0 bottom-12 bg-white rounded-xl shadow-xl overflow-hidden z-10 w-40">
                           <button
                             onClick={() => { setLanguage('vi'); setShowLangMenu(false); }}
                             className={`w-full px-4 py-3 text-left text-sm ${language === 'vi' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}
@@ -649,6 +673,18 @@ export default function Home() {
                             className={`w-full px-4 py-3 text-left text-sm ${language === 'en' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}
                           >
                             🇬🇧 English
+                          </button>
+                          <button
+                            onClick={() => { setLanguage('ko'); setShowLangMenu(false); }}
+                            className={`w-full px-4 py-3 text-left text-sm ${language === 'ko' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}
+                          >
+                            🇰🇷 한국어
+                          </button>
+                          <button
+                            onClick={() => { setLanguage('zh'); setShowLangMenu(false); }}
+                            className={`w-full px-4 py-3 text-left text-sm ${language === 'zh' ? 'bg-blue-50 text-blue-600 font-medium' : 'hover:bg-gray-50'}`}
+                          >
+                            🇨🇳 中文
                           </button>
                         </div>
                       )}
@@ -723,7 +759,9 @@ export default function Home() {
                       : 'bg-gray-100 text-gray-500 text-xs'
                   }`}>
                     <p className="whitespace-pre-wrap leading-relaxed">{m.content}</p>
-                    {m.role === 'ai' && <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>}
+                    {m.role === 'ai' && (
+                      <p className="text-xs text-gray-400 mt-2 text-right">{m.time}</p>
+                    )}
                   </div>
                 </div>
               ))}
@@ -734,7 +772,9 @@ export default function Home() {
         </>
       )}
 
-      {activeTab === 'shop' && <ShopTab selectedCity={selectedCity} language={language} />}
+      {activeTab === 'shop' && (
+        <ShopTab selectedCity={selectedCity} language={language} />
+      )}
 
       {/* Bottom Tab Bar */}
       <div className="bg-white border-t border-gray-200 z-[1002]">
